@@ -60,13 +60,13 @@
     const header = $('site-header')
     if (header) {
       header.innerHTML = '<div class="topbar-inner">' +
-        '<a class="brand" href="login-email.html"><img id="brand-logo" alt="Kluzar" /><span>Accounts</span></a>' +
+        '<a class="brand" href="/login/"><img id="brand-logo" alt="Kluzar" /><span>Accounts</span></a>' +
         '<nav class="topnav" aria-label="Account">' +
         (authed ? '<button type="button" id="nav-dashboard" class="nav-btn">Dashboard</button><button type="button" id="nav-logout" class="nav-btn">Log out</button>' : '') +
         '</nav></div>'
       if (window.KLUZAR_LOGO_URL) $('brand-logo').src = window.KLUZAR_LOGO_URL
       const dash = $('nav-dashboard')
-      if (dash) dash.addEventListener('click', () => go('dashboard.html'))
+      if (dash) dash.addEventListener('click', () => go('/dashboard/'))
       const out = $('nav-logout')
       if (out) out.addEventListener('click', logout)
     }
@@ -76,7 +76,7 @@
   async function logout() {
     try { await api('/auth/logout', { method: 'POST', body: JSON.stringify({}) }) } catch { /* ignore */ }
     S.clear()
-    go('login-email.html')
+    go('/login/')
   }
   async function requireSession() {
     try {
@@ -85,7 +85,7 @@
       return session
     } catch (err) {
       renderChrome(false)
-      if (err.status === 401) go('expired.html')
+      if (err.status === 401) go('/expired/')
       else showError(err.message)
       return null
     }
@@ -137,7 +137,7 @@
         await api('/auth/logout-all', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({}) })
       } catch (err) { showError(err.message); return }
       S.clear()
-      go('login-email.html')
+      go('/login/')
     })
     const retry = $('entitlement-retry')
     if (retry) retry.addEventListener('click', () => window.location.reload())
@@ -153,28 +153,28 @@
         e.preventDefault()
         S.setItem('kluzar_email', $('email-input').value.trim())
         S.setItem('kluzar_password_failures', '0')
-        go('login-password.html')
+        go('/login/password/')
       })
-      $('go-signup').addEventListener('click', () => go('signup.html'))
-      $('go-forgot-1').addEventListener('click', () => go('forgot.html'))
+      $('go-signup').addEventListener('click', () => go('/signup/'))
+      $('go-forgot-1').addEventListener('click', () => go('/forget-password/'))
       // If already logged in, go straight to dashboard.
-      try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) go('dashboard.html') } catch { /* stay */ }
+      try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) go('/dashboard/') } catch { /* stay */ }
     }
 
     if (page === 'login-password') {
       const email = S.getItem('kluzar_email') || ''
-      if (!email) { go('login-email.html'); return }
+      if (!email) { go('/login/'); return }
       $('password-email-label').textContent = email
-      $('back-to-email').addEventListener('click', () => go('login-email.html'))
-      $('go-forgot-2').addEventListener('click', () => go('forgot.html'))
+      $('back-to-email').addEventListener('click', () => go('/login/'))
+      $('go-forgot-2').addEventListener('click', () => go('/forget-password/'))
       $('form-password').addEventListener('submit', async (e) => {
         e.preventDefault()
         try {
           const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password: $('password-input').value }) })
           S.setItem('kluzar_password_failures', '0')
-          if (data.setupRequired) { S.setItem('kluzar_setup_token', data.setupToken); go('mfa-setup.html'); return }
-          if (data.mfaRequired) { S.setItem('kluzar_challenge_token', data.challengeToken); go('mfa-verify.html'); return }
-          go('dashboard.html')
+          if (data.setupRequired) { S.setItem('kluzar_setup_token', data.setupToken); go('/mfa-setup/'); return }
+          if (data.mfaRequired) { S.setItem('kluzar_challenge_token', data.challengeToken); go('/login/code/'); return }
+          go('/dashboard/')
         } catch (err) {
           // After 2 consecutive wrong passwords, back to email entry.
           // UI reset only — server-side abuse counters are NOT reset.
@@ -184,14 +184,14 @@
           if (n >= 2) {
             S.setItem('kluzar_password_failures', '0')
             S.setItem('kluzar_notice', 'Too many incorrect attempts in this flow. Please start again from your email address.')
-            go('login-email.html')
+            go('/login/')
           } else showError(err.message)
         }
       })
     }
 
     if (page === 'signup') {
-      $('back-to-login').addEventListener('click', () => go('login-email.html'))
+      $('back-to-login').addEventListener('click', () => go('/login/'))
       $('form-signup').addEventListener('submit', async (e) => {
         e.preventDefault()
         const email = $('signup-email').value.trim()
@@ -201,7 +201,7 @@
           const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
           S.setItem('kluzar_email', email)
           S.setItem('kluzar_setup_token', data.setupToken)
-          go('mfa-setup.html')
+          go('/mfa-setup/')
         } catch (err) { showError(err.message) }
       })
     }
@@ -244,39 +244,39 @@
         try {
           if (sessionMode) {
             await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: $('mfa-setup-code').value.trim() }) })
-            go('dashboard.html')
+            go('/dashboard/')
             return
           }
           const data = await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ setupToken: S.getItem('kluzar_setup_token'), code: $('mfa-setup-code').value.trim() }) })
           S.removeItem('kluzar_setup_token')
           if (data.recoveryCodes) S.setItem('kluzar_recovery_codes', JSON.stringify(data.recoveryCodes))
-          go('recovery-codes.html')
+          go('/recovery-codes/')
         } catch (err) { showError(err.message) }
       })
     }
 
     if (page === 'mfa-verify') {
       const challengeToken = S.getItem('kluzar_challenge_token')
-      if (!challengeToken) { go('login-email.html'); return }
+      if (!challengeToken) { go('/login/'); return }
       $('form-mfa-verify').addEventListener('submit', async (e) => {
         e.preventDefault()
         try {
           await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })
           S.removeItem('kluzar_challenge_token')
-          go('dashboard.html')
+          go('/dashboard/')
         } catch (err) { showError(err.message) }
       })
     }
 
     if (page === 'recovery-codes') {
       const codes = JSON.parse(S.getItem('kluzar_recovery_codes') || '[]')
-      if (!codes.length) { go('login-email.html'); return }
+      if (!codes.length) { go('/login/'); return }
       renderRecoveryCodes(codes, $('recovery-list'))
       $('download-codes').addEventListener('click', () => downloadCodes(codes, 'kluzar-recovery-codes.txt'))
-      $('recovery-done').addEventListener('click', () => { S.removeItem('kluzar_recovery_codes'); go('dashboard.html') })
+      $('recovery-done').addEventListener('click', () => { S.removeItem('kluzar_recovery_codes'); go('/dashboard/') })
     }
 
-    if (page === 'forgot') {
+    if (page === 'forget-password') {
       $('forgot-email').value = S.getItem('kluzar_email') || ''
       $('form-forgot').addEventListener('submit', async (e) => {
         e.preventDefault()
@@ -284,15 +284,15 @@
           const data = await api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email: $('forgot-email').value.trim(), code: $('forgot-code').value.trim() }) })
           if (data.recoveryToken) {
             S.setItem('kluzar_recovery_token', data.recoveryToken)
-            go('forgot-reset.html')
+            go('/forget-password/reset/')
           } else showInfo(data.message || 'If an account exists, a recovery step is available.')
         } catch (err) { showError(err.message) }
       })
     }
 
-    if (page === 'forgot-reset') {
+    if (page === 'forget-password-reset') {
       const recoveryToken = S.getItem('kluzar_recovery_token')
-      if (!recoveryToken) { go('forgot.html'); return }
+      if (!recoveryToken) { go('/forget-password/'); return }
       $('form-reset').addEventListener('submit', async (e) => {
         e.preventDefault()
         if ($('reset-password').value !== $('reset-password2').value) { showError('Passwords do not match.'); return }
@@ -300,7 +300,7 @@
           await api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ recoveryToken, newPassword: $('reset-password').value }) })
           S.removeItem('kluzar_recovery_token')
           S.setItem('kluzar_notice', 'Password changed. Please sign in again with your new password and authenticator code.')
-          go('login-email.html')
+          go('/login/')
         } catch (err) { showError(err.message) }
       })
     }
@@ -317,7 +317,7 @@
         e.preventDefault()
         try {
           await api('/account/profile', { method: 'PATCH', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ firstName: $('profile-first').value, lastName: $('profile-last').value, phone: $('profile-phone').value }) })
-          go('dashboard.html')
+          go('/dashboard/')
         } catch (err) { showError(err.message) }
       })
     }
@@ -329,25 +329,25 @@
         e.preventDefault()
         try {
           await api('/auth/password/change', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('change-current').value, mfaCode: $('change-mfa').value.trim(), newPassword: $('change-new').value }) })
-          go('dashboard.html')
+          go('/dashboard/')
         } catch (err) { showError(err.message) }
       })
     }
 
-    if (page === 'mfa-manage') {
+    if (page === 'authenticator') {
       const session = await requireSession()
       if (!session) return
       $('mfa-manage-status').textContent = session.user.mfaEnabled ? 'Authenticator is currently on.' : 'Authenticator is currently off.'
       $('mfa-resetup').addEventListener('click', () => {
         // The setup page itself will ask for the current password.
         // Nothing sensitive is passed through storage to get there.
-        go('mfa-setup.html')
+        go('/mfa-setup/')
       })
       $('form-mfa-disable').addEventListener('submit', async (e) => {
         e.preventDefault()
         try {
           await api('/auth/mfa/disable', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('disable-current').value, mfaCode: $('disable-mfa').value.trim() }) })
-          go('dashboard.html')
+          go('/dashboard/')
         } catch (err) { showError(err.message) }
       })
     }
@@ -393,7 +393,7 @@
 
     if (page === 'expired') {
       renderChrome(false)
-      $('expired-login').addEventListener('click', () => go('login-email.html'))
+      $('expired-login').addEventListener('click', () => go('/login/'))
     }
 
     // Notice left by a previous page (e.g. after password reset).

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kluzar Accounts — Dashboard</title>
+<link rel="stylesheet" href="/styles.css" />
+<script src="/config.js"></script>
+<script src="/logo.js"></script>
+</head>
+<body data-page="dashboard">
+<header class="topbar" id="site-header"></header>
+<main class="shell">
+<div id="global-error" class="alert error hidden" role="alert"></div>
+<div id="global-info" class="alert info hidden" role="status"></div>
+<section class="view">
+<h1>Your account</h1>
+<div class="card">
+<h2>Profile</h2>
+<p><strong>Email:</strong> <span id="dash-email"></span> · <span id="dash-verified"></span></p>
+<p><strong>Name:</strong> <span id="dash-name"></span> · <strong>Phone:</strong> <span id="dash-phone"></span></p>
+<p><strong>Authenticator:</strong> <span id="dash-mfa"></span></p>
+<a class="btn-secondary" href="/profile/">Edit profile</a>
+</div>
+<div class="card">
+<h2>Subscription</h2>
+<div id="entitlement-loading"><p>Checking your subscription…</p></div>
+<div id="entitlement-error" class="hidden"><p>We could not load your subscription right now.</p><button type="button" class="btn-secondary" id="entitlement-retry">Try again</button></div>
+<div id="entitlement-content" class="hidden">
+<p><strong>Plan:</strong> <span id="ent-plan"></span> · <strong>Status:</strong> <span id="ent-status"></span></p>
+<p class="muted" id="ent-note"></p>
+<a id="get-premium-btn" class="btn-primary hidden" href="#">Get Premium →</a>
+</div>
+</div>
+<div class="card">
+<h2>Security</h2>
+<a class="btn-secondary" href="/change-password/">Change password</a>
+<a class="btn-secondary" href="/authenticator/">Manage authenticator</a>
+<a class="btn-secondary" href="/sessions/">Active sessions</a>
+<a class="btn-secondary" href="/recovery-codes/regenerate/">Regenerate recovery codes</a>
+</div>
+<button type="button" class="btn-secondary" id="dash-logout-all">Log out of all devices</button>
+</section>
+</main>
+<footer class="footer" id="site-footer"></footer>
+<script src="/shared.js"></script>
+</body>
+</html>

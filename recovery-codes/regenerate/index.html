@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kluzar Accounts — Regenerate recovery codes</title>
+<link rel="stylesheet" href="/styles.css" />
+<script src="/config.js"></script>
+<script src="/logo.js"></script>
+</head>
+<body data-page="recovery-regenerate">
+<header class="topbar" id="site-header"></header>
+<main class="shell">
+<div id="global-error" class="alert error hidden" role="alert"></div>
+<div id="global-info" class="alert info hidden" role="status"></div>
+<section class="view card">
+<h1>Regenerate recovery codes</h1>
+<p class="lead">This replaces all previous recovery codes. Old codes will stop working immediately after new codes are confirmed by the server.</p>
+<form id="form-recovery-regen">
+<label for="regen-current">Current password</label>
+<input id="regen-current" type="password" autocomplete="current-password" required />
+<label for="regen-mfa">Authenticator code</label>
+<input id="regen-mfa" type="text" autocomplete="one-time-code" required />
+<button type="submit" class="btn-primary">Generate new codes →</button>
+</form>
+<ul id="regen-list" class="code-list hidden"></ul>
+<button type="button" class="btn-secondary hidden" id="regen-download">Download new codes</button>
+<a class="btn-secondary" href="/dashboard/">Back to dashboard</a>
+</section>
+</main>
+<footer class="footer" id="site-footer"></footer>
+<script src="/shared.js"></script>
+</body>
+</html>

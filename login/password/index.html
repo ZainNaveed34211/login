@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kluzar Accounts — Password</title>
+<link rel="stylesheet" href="/styles.css" />
+<script src="/config.js"></script>
+<script src="/logo.js"></script>
+</head>
+<body data-page="login-password">
+<header class="topbar" id="site-header"></header>
+<main class="shell">
+<div id="global-error" class="alert error hidden" role="alert"></div>
+<div id="global-info" class="alert info hidden" role="status"></div>
+<section class="view card">
+<h1>Enter your password</h1>
+<p class="lead">Signing in as <strong id="password-email-label"></strong></p>
+<form id="form-password">
+<label for="password-input">Password</label>
+<input id="password-input" type="password" autocomplete="current-password" required />
+<button type="submit" class="btn-primary">Continue →</button>
+</form>
+<p class="muted"><button type="button" class="link" id="back-to-email">Use a different email</button> · <button type="button" class="link" id="go-forgot-2">Forgot your password?</button></p>
+</section>
+</main>
+<footer class="footer" id="site-footer"></footer>
+<script src="/shared.js"></script>
+</body>
+</html>

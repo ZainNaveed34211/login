@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kluzar Accounts — Manage authenticator</title>
+<link rel="stylesheet" href="/styles.css" />
+<script src="/config.js"></script>
+<script src="/logo.js"></script>
+</head>
+<body data-page="authenticator">
+<header class="topbar" id="site-header"></header>
+<main class="shell">
+<div id="global-error" class="alert error hidden" role="alert"></div>
+<div id="global-info" class="alert info hidden" role="status"></div>
+<section class="view card">
+<h1>Manage authenticator</h1>
+<p class="lead" id="mfa-manage-status"></p>
+<form id="form-mfa-disable">
+<label for="disable-current">Current password</label>
+<input id="disable-current" type="password" autocomplete="current-password" required />
+<label for="disable-mfa">Authenticator code</label>
+<input id="disable-mfa" type="text" autocomplete="one-time-code" required />
+<button type="submit" class="btn-danger">Disable authenticator</button>
+</form>
+<p class="muted">Disabling removes your authenticator and recovery codes. You will need to set up a new authenticator to restore backup codes.</p>
+<a class="btn-secondary" href="/dashboard/">Back to dashboard</a>
+<button type="button" class="btn-secondary" id="mfa-resetup">Set up a new authenticator</button>
+</section>
+</main>
+<footer class="footer" id="site-footer"></footer>
+<script src="/shared.js"></script>
+</body>
+</html>

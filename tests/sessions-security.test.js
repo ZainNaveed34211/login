@@ -114,7 +114,7 @@ test('frontend: Get Premium points to payments.kluzar.com, config is single-sour
   const app = readFileSync(path.join(root, '../shared.js'), 'utf8')
   const config = readFileSync(path.join(root, '../config.js'), 'utf8')
   const index = readFileSync(path.join(root, '../index.html'), 'utf8')
-  const dashboard = readFileSync(path.join(root, '../pages/dashboard.html'), 'utf8')
+  const dashboard = readFileSync(path.join(root, '../dashboard/index.html'), 'utf8')
   assert.ok(config.includes("PAYMENTS_URL: 'https://payments.kluzar.com'"))
   assert.ok(app.includes('PAYMENTS_URL'), 'shared code must use the configured payments URL')
   assert.ok(!app.includes('https://payments.kluzar.com'), 'shared code must not hardcode the payments URL elsewhere')
