@@ -1,0 +1,41 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check JavaScript syntax
+        run: |
+          node --check worker/src/index.js
+          node --check worker/src/handlers.js
+          node --check worker/src/crypto.js
+          node --check worker/src/security.js
+          node --check worker/src/db.js
+          node --check shared.js
+          node --check config.js
+      - name: Run tests
+        run: node --test tests/*.test.js
+      - name: Check frontend references
+        run: |
+          test -f index.html
+          test -f styles.css
+          test -f shared.js
+          test -f config.js
+          test -f logo.js
+          test -f qr-lib.js
+          test -f login/index.html
+          test -f forget-password/index.html
+          test -f forget-password/reset/index.html
+          test -f dashboard/index.html
+          grep -q "https://payments.kluzar.com" config.js
+          grep -q "https://account-api.kluzar.com" config.js
