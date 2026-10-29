@@ -25,13 +25,27 @@ export async function createSession(db, userId, userAgent, ipHashValue) {
   const csrfToken = randomToken(24)
   const id = randomToken(16)
   const expiresAt = isoPlus(2 * 24 * 60 * 60 * 1000) // 2 days, server-enforced
+  // User-Agent is untrusted client input: cap it before storage so a
+  // huge header cannot bloat the sessions table. The value is never
+  // rendered as HTML (frontend uses textContent only).
+  const safeAgent = String(userAgent || '').slice(0, 500)
   await db
     .prepare(
       'INSERT INTO sessions (id, user_id, token_hash, csrf_token, user_agent, ip_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .bind(id, userId, tokenHash, csrfToken, userAgent || '', ipHashValue || '', nowIso(), expiresAt)
+    .bind(id, userId, tokenHash, csrfToken, safeAgent, ipHashValue || '', nowIso(), expiresAt)
     .run()
   return { id, token, csrfToken, expiresAt }
+}
+// D1 run() returns meta.changes (rows affected) in production D1 and
+// in the test mock. Atomic claim helpers rely on it: a conditional
+// UPDATE/DELETE that affects 0 rows means another request already
+// claimed the token/code/step — the caller must treat that as failure,
+// not as success. If a driver ever omits meta, this returns 0 (fail
+// closed) rather than assuming success.
+export function changesOf(runResult) {
+  const n = runResult && runResult.meta && runResult.meta.changes
+  return Number.isFinite(n) ? n : 0
 }
 export async function deleteSessionByHash(db, tokenHash) {
   await db.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(tokenHash).run()

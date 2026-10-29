@@ -21,6 +21,7 @@ import {
 } from './crypto.js'
 import {
   audit,
+  changesOf,
   createSession,
   deleteAllSessions,
   deleteSessionByHash,
@@ -33,10 +34,14 @@ import {
   nowIso,
 } from './db.js'
 import {
-  checkRate,
+  checkRateD1,
+  checkRateD1Account,
   csrfOk,
   errorResponse,
   ipHash,
+  isCodeFormat,
+  isOneTimeToken,
+  isSessionId,
   isValidEmail,
   isValidName,
   isValidPhone,
@@ -47,15 +52,16 @@ import {
   clientIp,
   publicUser,
 } from './security.js'
+import { clampPbkdf2Iterations } from './crypto.js'
 
 function iterations(env) {
   // Workers Free native WebCrypto rejects PBKDF2 iteration counts above
   // 100000 (NotSupportedError), so the production default is 100000 — the
   // platform maximum on the free plan. The stored hash records its own
   // iteration count, so this can be raised again on a paid plan without
-  // breaking existing accounts.
-  const n = parseInt(env.PBKDF2_ITERATIONS || '100000', 10)
-  return Number.isFinite(n) && n > 0 ? n : 100000
+  // breaking existing accounts. Any env value above the maximum is
+  // clamped, never honoured and never thrown on.
+  return clampPbkdf2Iterations(parseInt(env.PBKDF2_ITERATIONS || '100000', 10))
 }
 function sessionCookie(token, env) {
   const insecure = env.ALLOW_INSECURE_COOKIE === 'true'
@@ -78,7 +84,10 @@ function parseCookie(request) {
 }
 async function getSession(request, env) {
   const token = parseCookie(request).kluzar_session
-  if (!token) return null
+  // A session token this system issues is a base64url random token.
+  // Anything else can never match a stored hash: reject before any
+  // database lookup, without leaking whether a session exists.
+  if (!isOneTimeToken(token)) return null
   const hash = await sha256Hex(token)
   const session = await getSessionByHash(env.DB, hash)
   if (!session) return null
@@ -106,16 +115,24 @@ async function createOneTimeToken(db, table, userId, minutes) {
   checkOneTimeTable(table)
   const token = randomToken(32)
   const hash = await sha256Hex(token)
-  await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run()
-  await db
-    .prepare(`INSERT INTO ${table} (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`)
-    .bind(randomToken(16), userId, hash, nowIso(), isoPlus(minutes * 60 * 1000))
-    .run()
+  // DELETE + INSERT in one batch: all-or-nothing. A failure cannot
+  // leave the user with no valid token while the caller thinks one
+  // was issued, and a concurrent create cannot interleave between
+  // the delete and the insert.
+  await db.batch([
+    db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId),
+    db.prepare(`INSERT INTO ${table} (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`)
+      .bind(randomToken(16), userId, hash, nowIso(), isoPlus(minutes * 60 * 1000)),
+  ])
   return token
 }
-async function consumeOneTimeToken(db, table, token) {
+// Lookup only — does NOT consume. Used for the first step of a
+// multi-step flow (MFA setup: setup creates a pending secret, verify
+// consumes the token) and as the pre-check before an atomic consume.
+// A lookup alone must never authorise a final action.
+async function peekOneTimeToken(db, table, token) {
   checkOneTimeTable(table)
-  if (!token) return null
+  if (!isOneTimeToken(token)) return null
   const hash = await sha256Hex(token)
   const row = await db.prepare(`SELECT * FROM ${table} WHERE token_hash = ?`).bind(hash).first()
   if (!row) return null
@@ -125,27 +142,74 @@ async function consumeOneTimeToken(db, table, token) {
   }
   return row
 }
+// Atomic consume. The caller must already have verified whatever the
+// token gates (TOTP code, new password validity) BEFORE calling this,
+// so a failed verification does not burn a token the user can retry
+// with — but once verification has passed, only the first concurrent
+// caller wins: the conditional DELETE/UPDATE affects exactly 1 row
+// for the winner and 0 rows for every loser, which must fail.
+// setup_tokens / login_challenges have no `used` column, so consume
+// deletes the row (expiry-guarded). recovery_transactions has `used`,
+// so consume marks it used (expiry- and used-guarded). Returns the
+// previously peeked row on success, null on failure.
+async function consumeOneTimeToken(db, table, token, peekedRow = null) {
+  checkOneTimeTable(table)
+  if (!isOneTimeToken(token)) return null
+  const hash = await sha256Hex(token)
+  const now = nowIso()
+  let res
+  if (table === 'recovery_transactions') {
+    res = await db
+      .prepare('UPDATE recovery_transactions SET used = 1 WHERE token_hash = ? AND used = 0 AND expires_at > ?')
+      .bind(hash, now)
+      .run()
+  } else {
+    res = await db
+      .prepare(`DELETE FROM ${table} WHERE token_hash = ? AND expires_at > ?`)
+      .bind(hash, now)
+      .run()
+  }
+  if (changesOf(res) !== 1) return null
+  if (peekedRow) return peekedRow
+  return { token_hash: hash }
+}
+// Atomic TOTP step claim. verifyTotp (pure, in crypto.js) already
+// refuses steps at or below last_used_step, but two concurrent
+// requests could both pass that pure check before either updated the
+// row. This conditional UPDATE is the enforcement: only the first
+// caller changes exactly 1 row; every other caller gets 0 and fails.
+async function claimTotpStep(db, userId, step) {
+  const res = await db
+    .prepare('UPDATE mfa_secrets SET last_used_step = ? WHERE user_id = ? AND (last_used_step IS NULL OR last_used_step < ?)')
+    .bind(step, userId, step)
+    .run()
+  return changesOf(res) === 1
+}
 async function verifyRecoveryCode(db, userId, code) {
   const normalized = normalizeRecoveryCode(code)
-  if (!normalized) return false
+  // A recovery code is 16 alphanumeric characters (shown as 4-4-4-4).
+  // Anything else can never match a stored hash.
+  if (!/^[A-Z0-9]{16}$/.test(normalized)) return false
   const hash = await sha256Hex(normalized)
-  const row = await db
-    .prepare('SELECT * FROM recovery_codes WHERE user_id = ? AND code_hash = ? AND used = 0')
-    .bind(userId, hash)
-    .first()
-  if (!row) return false
-  await db.prepare('UPDATE recovery_codes SET used = 1, used_at = ? WHERE id = ?').bind(nowIso(), row.id).run()
-  return true
+  // Atomic claim: check + mark-used in ONE conditional UPDATE.
+  // Two concurrent uses of the same code: first affects 1 row (wins),
+  // second affects 0 rows (fails). The old SELECT-then-UPDATE allowed
+  // both to pass.
+  const res = await db
+    .prepare('UPDATE recovery_codes SET used = 1, used_at = ? WHERE user_id = ? AND code_hash = ? AND used = 0')
+    .bind(nowIso(), userId, hash)
+    .run()
+  return changesOf(res) === 1
 }
 async function verifyMfaCode(db, env, user, code) {
   // Returns {ok, via} where via is 'totp' or 'recovery'. TOTP first.
-  if (/^\d{6}$/.test(String(code || ''))) {
+  if (isCodeFormat(code)) {
     const secretRow = await db.prepare('SELECT * FROM mfa_secrets WHERE user_id = ? AND enabled = 1').bind(user.id).first()
     if (!secretRow) return { ok: false, via: null }
     const secret = await decryptSecret(env, secretRow.encrypted_secret)
     const res = await verifyTotp(secret, code, secretRow.last_used_step)
     if (!res.ok) return { ok: false, via: null }
-    await db.prepare('UPDATE mfa_secrets SET last_used_step = ? WHERE user_id = ?').bind(res.step, user.id).run()
+    if (!(await claimTotpStep(db, user.id, res.step))) return { ok: false, via: null }
     return { ok: true, via: 'totp' }
   }
   const ok = await verifyRecoveryCode(db, user.id, code)
@@ -172,9 +236,15 @@ export async function handleRequest(request, env) {
   try {
     // ---- Public: register ----
     if (method === 'POST' && path === '/auth/register') {
-      if (!checkRate(env, request, 'register')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'register'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
+      // Validate before any use: email must be a string (normalizeEmail
+      // alone would coerce numbers/objects into a string), password is
+      // checked by isValidPassword (type + length + mixed characters).
+      if (typeof body.email !== 'string') {
+        return errorResponse(env, request, 400, 'Please enter a valid email and a password of 12 to 128 characters with an uppercase letter, a lowercase letter, a number, and a symbol.', 'VALIDATION')
+      }
       const email = normalizeEmail(body.email)
       const password = body.password
       if (!isValidEmail(email) || !isValidPassword(password)) {
@@ -190,15 +260,34 @@ export async function handleRequest(request, env) {
       }
       const passwordHash = await hashPassword(password, iterations(env))
       const userId = randomToken(16)
-      await env.DB.prepare(
-        'INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      )
-        .bind(userId, email, email, passwordHash, 'pending_mfa', 0, 0, nowIso(), nowIso())
-        .run()
-      await env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
-        .bind(userId, 'free', 'active', nowIso())
-        .run()
-      const setupToken = await createOneTimeToken(env.DB, 'setup_tokens', userId, 30)
+      const setupToken = randomToken(32)
+      const setupHash = await sha256Hex(setupToken)
+      // User + entitlement + setup token in ONE batch: a failure cannot
+      // leave a user without an entitlement or without a setup token.
+      // Duplicate-email race: two concurrent registers both pass the
+      // SELECT above; the second batch then violates the UNIQUE
+      // constraint on users.email_normalized and must return 409,
+      // never 500.
+      try {
+        await env.DB.batch([
+          env.DB.prepare(
+            'INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          ).bind(userId, email, email, passwordHash, 'pending_mfa', 0, 0, nowIso(), nowIso()),
+          env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
+            .bind(userId, 'free', 'active', nowIso()),
+          env.DB.prepare('DELETE FROM setup_tokens WHERE user_id = ?').bind(userId),
+          env.DB.prepare('INSERT INTO setup_tokens (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+            .bind(randomToken(16), userId, setupHash, nowIso(), isoPlus(30 * 60 * 1000)),
+        ])
+      } catch (err) {
+        const msg = String(err && err.message ? err.message : '')
+        if (/UNIQUE constraint/i.test(msg)) {
+          const raced = await getUserByEmail(env.DB, email)
+          if (raced) await audit(env.DB, raced.id, 'register_duplicate', ipH, false, 'duplicate')
+          return errorResponse(env, request, 409, 'Registration could not be completed. Please try logging in or use a different email.', 'REGISTER_FAILED')
+        }
+        throw err
+      }
       await audit(env.DB, userId, 'register', ipH, true, '')
       safeLog('register', { userId, ok: true })
       return jsonResponse(env, request, 201, { ok: true, userId, email, status: 'pending_mfa', setupToken })
@@ -206,18 +295,39 @@ export async function handleRequest(request, env) {
 
     // ---- Public: login (password step) ----
     if (method === 'POST' && path === '/auth/login') {
-      if (!checkRate(env, request, 'login')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'login'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
+      if (typeof body.email !== 'string') {
+        return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
+      }
       const email = normalizeEmail(body.email)
       const password = body.password
       if (!isValidEmail(email) || typeof password !== 'string') {
         return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
       }
+      // Per-account rate limit, in addition to the per-IP limit above.
+      // The email key is a hash, never the raw email, so the rate table
+      // stores no plaintext PII. This stops targeted brute force from
+      // many IPs without loosening the per-IP limit.
+      if (!(await checkRateD1Account(env.DB, 'login', await sha256Hex(email)))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
       const user = await getUserByEmail(env.DB, email)
       // Dummy hash for timing equalisation when the user does not exist.
-      const dummyHash = await hashPassword('dummy-password-for-timing', iterations(env))
-      const passwordOk = user ? await verifyPassword(password, user.password_hash) : await verifyPassword(password, dummyHash)
+      // LAZY: previously it was computed unconditionally for every login,
+      // so a known user paid for TWO PBKDF2 runs (dummy + real verify).
+      // Now it is computed only when the user does not exist. Unknown
+      // users still cost exactly one full hash (the dummy verify), so
+      // account enumeration via timing is preserved; known users cost
+      // one hash instead of two. Iterations are NOT lowered.
+      let passwordOk
+      if (user) {
+        passwordOk = await verifyPassword(password, user.password_hash)
+      } else {
+        const dummyHash = await hashPassword('dummy-password-for-timing', iterations(env))
+        passwordOk = await verifyPassword(password, dummyHash)
+      }
       if (!user || !passwordOk) {
         await audit(env.DB, user ? user.id : '', 'login_failed', ipH, false, '')
         return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
@@ -237,20 +347,34 @@ export async function handleRequest(request, env) {
 
     // ---- MFA setup (pending via setupToken, or re-setup via session) ----
     if (method === 'POST' && path === '/auth/mfa/setup') {
+      if (!(await checkRateD1(env.DB, request, 'mfaSetup'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
       let user = null
       let setupRow = null
       if (body.setupToken) {
-        setupRow = await consumeOneTimeToken(env.DB, 'setup_tokens', body.setupToken)
-        // consumeOneTimeToken only looks up; do NOT delete yet (retry allowed)
+        // PEEK only: setup is step 1 of 2. Deleting here would break
+        // the verify step that must use the same token, and would
+        // burn the token on a mere QR refresh. The verify step is
+        // the consuming step. An attacker with the token could call
+        // setup repeatedly, but that only re-issues a pending secret
+        // for an account they already hold the setup token for — it
+        // creates no session and activates nothing.
+        setupRow = await peekOneTimeToken(env.DB, 'setup_tokens', body.setupToken)
         if (!setupRow) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
-        // Re-lookup without deleting: consumeOneTimeToken above did not delete, so re-fetch is safe.
         user = await getUserById(env.DB, setupRow.user_id)
       } else {
         const { session, error } = await requireSession(request, env)
         if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
-        if (!body.currentPassword || !(await verifyPassword(body.currentPassword, session.user.password_hash))) {
+        // Authenticated branch: CSRF is required (previously missing).
+        // The frontend now sends X-CSRF-Token on this call; the
+        // unauthenticated setupToken branch above is token-gated, not
+        // session-gated, so CSRF does not apply to it.
+        if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+        if (!(await checkRateD1Account(env.DB, 'mfaSetup', session.user.id))) {
+          return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+        }
+        if (typeof body.currentPassword !== 'string' || !(await verifyPassword(body.currentPassword, session.user.password_hash))) {
           return errorResponse(env, request, 401, 'Current password is incorrect.', 'INVALID_CREDENTIALS')
         }
         user = session.user
@@ -274,37 +398,53 @@ export async function handleRequest(request, env) {
 
     // ---- MFA verify (setup / login challenge / re-setup) ----
     if (method === 'POST' && path === '/auth/mfa/verify') {
-      if (!checkRate(env, request, 'mfaVerify')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'mfaVerify'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
       const code = body.code
       // A) Registration setup
       if (body.setupToken) {
-        const setupRow = await consumeOneTimeToken(env.DB, 'setup_tokens', body.setupToken)
+        const setupRow = await peekOneTimeToken(env.DB, 'setup_tokens', body.setupToken)
         if (!setupRow) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+        if (!(await checkRateD1Account(env.DB, 'mfaVerify', setupRow.user_id))) {
+          return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+        }
         const pending = await env.DB.prepare('SELECT * FROM pending_mfa_secrets WHERE user_id = ?').bind(setupRow.user_id).first()
-        if (!pending || new Date(pending.expires_at).getTime() <= Date.now() || !/^\d{6}$/.test(String(code || ''))) {
+        if (!pending || new Date(pending.expires_at).getTime() <= Date.now() || !isCodeFormat(code)) {
           return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
         }
         const secret = await decryptSecret(env, pending.encrypted_secret)
         const res = await verifyTotp(secret, code, null)
         if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
-        await env.DB.prepare('DELETE FROM mfa_secrets WHERE user_id = ?').bind(setupRow.user_id).run()
-        await env.DB.prepare('INSERT INTO mfa_secrets (user_id, encrypted_secret, enabled, last_used_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(setupRow.user_id, pending.encrypted_secret, 1, res.step, nowIso(), nowIso())
-          .run()
-        await env.DB.prepare('UPDATE users SET status = ?, mfa_enabled = ?, updated_at = ? WHERE id = ?')
-          .bind('active', 1, nowIso(), setupRow.user_id)
-          .run()
-        await env.DB.prepare('DELETE FROM setup_tokens WHERE user_id = ?').bind(setupRow.user_id).run()
-        await env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ?').bind(setupRow.user_id).run()
+        // Consume AFTER a correct code, BEFORE issuing anything: a
+        // wrong code leaves the token retryable (existing UX), while
+        // two concurrent correct-code verifies race here and only the
+        // first (DELETE affects 1 row) proceeds to activation.
+        if (!(await consumeOneTimeToken(env.DB, 'setup_tokens', body.setupToken, setupRow))) {
+          return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+        }
         const codes = generateRecoveryCodes(10)
-        const stmts = [env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(setupRow.user_id)]
+        const codeStmts = []
         for (const c of codes) {
           const h = await sha256Hex(normalizeRecoveryCode(c))
-          stmts.push(env.DB.prepare('INSERT INTO recovery_codes (id, user_id, code_hash, used, created_at) VALUES (?, ?, ?, ?, ?)').bind(randomToken(16), setupRow.user_id, h, 0, nowIso()))
+          codeStmts.push(env.DB.prepare('INSERT INTO recovery_codes (id, user_id, code_hash, used, created_at) VALUES (?, ?, ?, ?, ?)').bind(randomToken(16), setupRow.user_id, h, 0, nowIso()))
         }
-        await env.DB.batch(stmts)
+        // Activation in ONE batch: old secret, new secret, user
+        // status, token cleanup, pending cleanup and recovery codes
+        // either all apply or none do. Previously these were separate
+        // statements, so a mid-way failure could leave a half-activated
+        // account.
+        await env.DB.batch([
+          env.DB.prepare('DELETE FROM mfa_secrets WHERE user_id = ?').bind(setupRow.user_id),
+          env.DB.prepare('INSERT INTO mfa_secrets (user_id, encrypted_secret, enabled, last_used_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(setupRow.user_id, pending.encrypted_secret, 1, res.step, nowIso(), nowIso()),
+          env.DB.prepare('UPDATE users SET status = ?, mfa_enabled = ?, updated_at = ? WHERE id = ?')
+            .bind('active', 1, nowIso(), setupRow.user_id),
+          env.DB.prepare('DELETE FROM setup_tokens WHERE user_id = ?').bind(setupRow.user_id),
+          env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ?').bind(setupRow.user_id),
+          env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(setupRow.user_id),
+          ...codeStmts,
+        ])
         await audit(env.DB, setupRow.user_id, 'mfa_setup', ipH, true, '')
         // MFA has now succeeded, so a session may be issued (the rule is
         // "no session until MFA succeeds" — setup verify IS that MFA success).
@@ -316,13 +456,23 @@ export async function handleRequest(request, env) {
       }
       // B) Login challenge (TOTP or recovery code)
       if (body.challengeToken) {
-        const challenge = await consumeOneTimeToken(env.DB, 'login_challenges', body.challengeToken)
+        const challenge = await peekOneTimeToken(env.DB, 'login_challenges', body.challengeToken)
         if (!challenge) return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
         const user = await getUserById(env.DB, challenge.user_id)
         if (!user || user.status !== 'active') return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+        if (!(await checkRateD1Account(env.DB, 'mfaVerify', user.id))) {
+          return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+        }
         const res = await verifyMfaCode(env.DB, env, user, code)
         if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
-        await env.DB.prepare('DELETE FROM login_challenges WHERE user_id = ?').bind(user.id).run()
+        // Consume AFTER a correct code, BEFORE creating the session:
+        // wrong codes leave the challenge retryable; concurrent
+        // correct-code verifies race here and only one gets a session.
+        // verifyMfaCode already atomically claimed the TOTP step /
+        // recovery code, so this is the second, independent claim.
+        if (!(await consumeOneTimeToken(env.DB, 'login_challenges', body.challengeToken, challenge))) {
+          return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+        }
         const session = await createSession(env.DB, user.id, userAgent, ipH)
         await audit(env.DB, user.id, 'login', ipH, true, res.via)
         return jsonResponse(env, request, 200, { ok: true, user: publicUser(user), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
@@ -330,17 +480,29 @@ export async function handleRequest(request, env) {
       // C) Authenticated re-setup
       const { session, error } = await requireSession(request, env)
       if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
+      // Authenticated branch: CSRF is required (previously missing).
+      // The frontend now sends X-CSRF-Token on this call.
+      if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      if (!(await checkRateD1Account(env.DB, 'mfaVerify', session.user.id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
       const pending = await env.DB.prepare('SELECT * FROM pending_mfa_secrets WHERE user_id = ?').bind(session.user.id).first()
-      if (!pending || !/^\d{6}$/.test(String(code || ''))) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      if (!pending || !isCodeFormat(code)) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
       const secret = await decryptSecret(env, pending.encrypted_secret)
       const res = await verifyTotp(secret, code, null)
       if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
-      await env.DB.prepare('DELETE FROM mfa_secrets WHERE user_id = ?').bind(session.user.id).run()
-      await env.DB.prepare('INSERT INTO mfa_secrets (user_id, encrypted_secret, enabled, last_used_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(session.user.id, pending.encrypted_secret, 1, res.step, nowIso(), nowIso())
-        .run()
-      await env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ?').bind(session.user.id).run()
-      await env.DB.prepare('UPDATE users SET mfa_enabled = ?, updated_at = ? WHERE id = ?').bind(1, nowIso(), session.user.id).run()
+      // Atomic pending claim: two concurrent correct-code verifies
+      // race here; only the first deletes exactly 1 pending row.
+      // Without this, both could insert a secret and both return
+      // success for the same code.
+      const claimed = await env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ? AND encrypted_secret = ?').bind(session.user.id, pending.encrypted_secret).run()
+      if (changesOf(claimed) !== 1) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM mfa_secrets WHERE user_id = ?').bind(session.user.id),
+        env.DB.prepare('INSERT INTO mfa_secrets (user_id, encrypted_secret, enabled, last_used_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(session.user.id, pending.encrypted_secret, 1, res.step, nowIso(), nowIso()),
+        env.DB.prepare('UPDATE users SET mfa_enabled = ?, updated_at = ? WHERE id = ?').bind(1, nowIso(), session.user.id),
+      ])
       await audit(env.DB, session.user.id, 'mfa_res setup', ipH, true, '')
       return jsonResponse(env, request, 200, { ok: true, mfaEnabled: true })
     }
@@ -354,12 +516,25 @@ export async function handleRequest(request, env) {
     }
     if (method === 'POST' && path === '/auth/logout') {
       const session = await getSession(request, env)
-      if (session) await deleteSessionByHash(env.DB, session.tokenHash)
+      // No session: idempotent success (clear the cookie anyway).
+      // With a session: CSRF is required (previously missing). A
+      // cross-site POST without the token must not log the victim
+      // out. The frontend now fetches the token from GET /auth/session
+      // and sends it here; Pages must deploy before this Worker change
+      // (old frontend + new Worker would leave the server session
+      // alive while the browser appears logged out).
+      if (session) {
+        if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+        await deleteSessionByHash(env.DB, session.tokenHash)
+      }
       return jsonResponse(env, request, 200, { ok: true }, { 'Set-Cookie': clearCookie(env) })
     }
     if (method === 'POST' && path === '/auth/logout-all') {
       const { session, error } = await requireSession(request, env)
       if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
+      // CSRF was previously missing here; the frontend already sends
+      // X-CSRF-Token on this call, so adding the check breaks nothing.
+      if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       await deleteAllSessions(env.DB, session.user.id)
       await audit(env.DB, session.user.id, 'logout_all', ipH, true, '')
       return jsonResponse(env, request, 200, { ok: true }, { 'Set-Cookie': clearCookie(env) })
@@ -370,9 +545,9 @@ export async function handleRequest(request, env) {
       const { session, error } = await requireSession(request, env)
       if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
-      if (!checkRate(env, request, 'passwordChange')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'passwordChange', session.user.id))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       const body = await readJson(request)
-      if (!(await verifyPassword(body.currentPassword, session.user.password_hash))) {
+      if (typeof body.currentPassword !== 'string' || !(await verifyPassword(body.currentPassword, session.user.password_hash))) {
         return errorResponse(env, request, 401, 'Current password is incorrect.', 'INVALID_CREDENTIALS')
       }
       if (session.user.mfa_enabled === 1) {
@@ -392,40 +567,60 @@ export async function handleRequest(request, env) {
 
     // ---- Forgot password (step 1: verify code, issue recovery transaction) ----
     if (method === 'POST' && path === '/auth/password/forgot') {
-      if (!checkRate(env, request, 'forgot')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'forgot'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
+      if (typeof body.email !== 'string') {
+        // Same generic response as for a non-existent account: never
+        // reveal whether the email exists or was merely malformed.
+        return jsonResponse(env, request, 200, { ok: true, message: 'If an account exists, a recovery step is available. Please check your authenticator or recovery codes.' })
+      }
       const email = normalizeEmail(body.email)
       const user = isValidEmail(email) ? await getUserByEmail(env.DB, email) : null
       if (!user || user.status !== 'active') {
         // Generic response: do not reveal whether the email exists.
         return jsonResponse(env, request, 200, { ok: true, message: 'If an account exists, a recovery step is available. Please check your authenticator or recovery codes.' })
       }
+      if (!(await checkRateD1Account(env.DB, 'forgot', await sha256Hex(email)))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
       const res = await verifyMfaCode(env.DB, env, user, body.code)
       if (!res.ok) return errorResponse(env, request, 400, 'Invalid email or recovery code.', 'INVALID_CODE')
       const recoveryToken = randomToken(32)
       const hash = await sha256Hex(recoveryToken)
-      await env.DB.prepare('INSERT INTO recovery_transactions (id, user_id, token_hash, created_at, expires_at, used) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(randomToken(16), user.id, hash, nowIso(), isoPlus(15 * 60 * 1000), 0)
-        .run()
+      // Replace any older transaction for this user atomically, so
+      // only the newest recovery token is valid at a time.
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM recovery_transactions WHERE user_id = ?').bind(user.id),
+        env.DB.prepare('INSERT INTO recovery_transactions (id, user_id, token_hash, created_at, expires_at, used) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(randomToken(16), user.id, hash, nowIso(), isoPlus(15 * 60 * 1000), 0),
+      ])
       await audit(env.DB, user.id, 'password_forgot', ipH, true, res.via)
       return jsonResponse(env, request, 200, { ok: true, recoveryToken, expiresIn: 900 })
     }
     // ---- Forgot password (step 2: reset) ----
     if (method === 'POST' && path === '/auth/password/reset') {
-      if (!checkRate(env, request, 'reset')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'reset'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
       if (!isValidPassword(body.newPassword)) return errorResponse(env, request, 400, 'New password must be 12 to 128 characters and include an uppercase letter, a lowercase letter, a number, and a symbol.', 'VALIDATION')
-      const tx = await consumeOneTimeToken(env.DB, 'recovery_transactions', body.recoveryToken)
-      if (!tx) return errorResponse(env, request, 400, 'Invalid or expired recovery link.', 'INVALID_RECOVERY')
-      const user = await getUserById(env.DB, tx.user_id)
+      // Peek first (token shape + expiry), then consume atomically
+      // BEFORE changing the password: two concurrent resets race on
+      // the consume, and only the winner changes the password. A
+      // failed consume must not change anything.
+      const txPeek = await peekOneTimeToken(env.DB, 'recovery_transactions', body.recoveryToken)
+      if (!txPeek) return errorResponse(env, request, 400, 'Invalid or expired recovery link.', 'INVALID_RECOVERY')
+      const user = await getUserById(env.DB, txPeek.user_id)
       if (!user) return errorResponse(env, request, 400, 'Invalid or expired recovery link.', 'INVALID_RECOVERY')
+      if (!(await consumeOneTimeToken(env.DB, 'recovery_transactions', body.recoveryToken, txPeek))) {
+        return errorResponse(env, request, 400, 'Invalid or expired recovery link.', 'INVALID_RECOVERY')
+      }
       const newHash = await hashPassword(body.newPassword, iterations(env))
-      await env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').bind(newHash, nowIso(), user.id).run()
-      await env.DB.prepare('UPDATE recovery_transactions SET used = 1 WHERE token_hash = ?').bind(await sha256Hex(body.recoveryToken)).run()
-      await env.DB.prepare('DELETE FROM recovery_transactions WHERE user_id = ?').bind(user.id).run()
-      await deleteAllSessions(env.DB, user.id)
+      await env.DB.batch([
+        env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').bind(newHash, nowIso(), user.id),
+        env.DB.prepare('DELETE FROM recovery_transactions WHERE user_id = ?').bind(user.id),
+        env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
+      ])
       await audit(env.DB, user.id, 'password_reset', ipH, true, '')
       return jsonResponse(env, request, 200, { ok: true, message: 'Password changed. Please log in again.' })
     }
@@ -435,19 +630,23 @@ export async function handleRequest(request, env) {
       const { session, error } = await requireSession(request, env)
       if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
-      if (!checkRate(env, request, 'regenerate')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!(await checkRateD1(env.DB, request, 'regenerate', session.user.id))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       const body = await readJson(request)
-      if (!(await verifyPassword(body.currentPassword, session.user.password_hash))) {
+      if (typeof body.currentPassword !== 'string' || !(await verifyPassword(body.currentPassword, session.user.password_hash))) {
         return errorResponse(env, request, 401, 'Current password is incorrect.', 'INVALID_CREDENTIALS')
       }
       // Authenticator code only (TOTP) for regeneration, per spec.
-      if (!/^\d{6}$/.test(String(body.mfaCode || ''))) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      if (!isCodeFormat(body.mfaCode)) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
       const secretRow = await env.DB.prepare('SELECT * FROM mfa_secrets WHERE user_id = ? AND enabled = 1').bind(session.user.id).first()
       if (!secretRow) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
       const secret = await decryptSecret(env, secretRow.encrypted_secret)
       const res = await verifyTotp(secret, body.mfaCode, secretRow.last_used_step)
       if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
-      await env.DB.prepare('UPDATE mfa_secrets SET last_used_step = ? WHERE user_id = ?').bind(res.step, session.user.id).run()
+      // Atomic step claim (previously an unconditional UPDATE, so two
+      // concurrent regenerations with the same code could both pass).
+      if (!(await claimTotpStep(env.DB, session.user.id, res.step))) {
+        return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      }
       const codes = generateRecoveryCodes(10)
       const stmts = [env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(session.user.id)]
       for (const c of codes) {
@@ -466,17 +665,30 @@ export async function handleRequest(request, env) {
       const { session, error } = await requireSession(request, env)
       if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      // Dedicated rate limit (previously missing entirely): disabling
+      // MFA is irreversible for the victim if an attacker ever holds
+      // a session, so brute force on password + code here gets its
+      // own per-account + per-IP limit, not the generic fallback.
+      if (!(await checkRateD1(env.DB, request, 'mfaDisable', session.user.id))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       const body = await readJson(request)
-      if (!(await verifyPassword(body.currentPassword, session.user.password_hash))) {
+      if (typeof body.currentPassword !== 'string' || !(await verifyPassword(body.currentPassword, session.user.password_hash))) {
         return errorResponse(env, request, 401, 'Current password is incorrect.', 'INVALID_CREDENTIALS')
       }
+      // verifyMfaCode enforces TOTP (with atomic step claim) or a
+      // single-use recovery code (with atomic claim) — password alone
+      // is never enough to disable MFA.
       const res = await verifyMfaCode(env.DB, env, session.user, body.mfaCode)
       if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
-      await env.DB.prepare('DELETE FROM mfa_secrets WHERE user_id = ?').bind(session.user.id).run()
-      await env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ?').bind(session.user.id).run()
-      await env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(session.user.id).run()
-      await env.DB.prepare('UPDATE users SET mfa_enabled = ?, updated_at = ? WHERE id = ?').bind(0, nowIso(), session.user.id).run()
-      await deleteAllSessions(env.DB, session.user.id)
+      // One batch: secrets, pending secrets, recovery codes, user
+      // flag and all sessions either all change or none do. A
+      // mid-way failure previously could leave MFA half-disabled.
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM mfa_secrets WHERE user_id = ?').bind(session.user.id),
+        env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ?').bind(session.user.id),
+        env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(session.user.id),
+        env.DB.prepare('UPDATE users SET mfa_enabled = ?, updated_at = ? WHERE id = ?').bind(0, nowIso(), session.user.id),
+        env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(session.user.id),
+      ])
       const newSession = await createSession(env.DB, session.user.id, userAgent, ipH)
       await audit(env.DB, session.user.id, 'mfa_disable', ipH, true, '')
       return jsonResponse(env, request, 200, { ok: true, mfaEnabled: false, csrfToken: newSession.csrfToken }, { 'Set-Cookie': sessionCookie(newSession.token, env) })
@@ -530,7 +742,10 @@ export async function handleRequest(request, env) {
       if (error) return errorResponse(env, request, 401, 'Please log in again.', 'UNAUTHORIZED')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
-      if (!body.sessionId || body.sessionId === session.id) return errorResponse(env, request, 400, 'Cannot revoke the current session here. Use Log out.', 'VALIDATION')
+      // Session IDs are server-issued opaque IDs. A non-string, empty
+      // or malformed value can never match a row and must not reach
+      // the query unvalidated, even though the query is parameterized.
+      if (!isSessionId(body.sessionId) || body.sessionId === session.id) return errorResponse(env, request, 400, 'Cannot revoke the current session here. Use Log out.', 'VALIDATION')
       await env.DB.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').bind(body.sessionId, session.user.id).run()
       return jsonResponse(env, request, 200, { ok: true })
     }

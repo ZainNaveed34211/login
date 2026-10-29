@@ -13,6 +13,43 @@
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 
+// Workers Free native WebCrypto rejects PBKDF2 iteration counts above
+// 100000 (NotSupportedError). This cap is enforced in BOTH directions:
+// new hashes are never created above it, and a stored hash claiming more
+// is never honoured — otherwise a single malicious database value could
+// force unbounded CPU work on every login attempt for that account.
+export const MAX_PBKDF2_ITERATIONS = 100000
+export function clampPbkdf2Iterations(n) {
+  const v = Math.floor(Number(n))
+  if (!Number.isFinite(v) || v < 1) return MAX_PBKDF2_ITERATIONS
+  return Math.min(v, MAX_PBKDF2_ITERATIONS)
+}
+// Strict parser for the stored hash format. Returns null for anything
+// malformed or unsupported — callers must treat null as "no match",
+// never throw, never return a server error for a bad stored value.
+export function parsePbkdf2Hash(stored) {
+  try {
+    if (typeof stored !== 'string') return null
+    const parts = stored.split('$')
+    if (parts.length !== 4 || parts[0] !== 'pbkdf2-sha256') return null
+    // Iteration count must be plain decimal digits only (no signs,
+    // spaces, decimals or suffixes) and within the supported range.
+    if (!/^\d+$/.test(parts[1])) return null
+    const iterations = parseInt(parts[1], 10)
+    if (!Number.isFinite(iterations) || iterations < 1 || iterations > MAX_PBKDF2_ITERATIONS) return null
+    // Salt and hash must be base64 of exactly the expected lengths:
+    // 16-byte salt, 32-byte (256-bit) derived key. Anything else cannot
+    // be a hash this system produced.
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(parts[2]) || !/^[A-Za-z0-9+/]+={0,2}$/.test(parts[3])) return null
+    const salt = b64decode(parts[2])
+    const expected = b64decode(parts[3])
+    if (salt.length !== 16 || expected.length !== 32) return null
+    return { iterations, salt, expected }
+  } catch {
+    return null
+  }
+}
+
 export function b64encode(bytes) {
   let s = ''
   const chunk = 0x8000
@@ -46,29 +83,36 @@ export function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase()
 }
 export async function hashPassword(password, iterations) {
+  // Defence in depth: even if a caller passes an env value above the
+  // Workers Free maximum, the created hash is capped, never thrown.
+  const it = clampPbkdf2Iterations(iterations)
   const salt = randomBytes(16)
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: it, hash: 'SHA-256' },
     key,
     256,
   )
-  return `pbkdf2-sha256$${iterations}$${b64encode(salt)}$${b64encode(new Uint8Array(bits))}`
+  return `pbkdf2-sha256$${it}$${b64encode(salt)}$${b64encode(new Uint8Array(bits))}`
 }
 export async function verifyPassword(password, stored) {
   try {
-    const parts = stored.split('$')
-    if (parts[0] !== 'pbkdf2-sha256' || parts.length !== 4) return false
-    const iterations = parseInt(parts[1], 10)
-    const salt = b64decode(parts[2])
-    const expected = b64decode(parts[3])
+    // Login/current-password inputs are never hashed at unbounded size:
+    // every password this system creates is at most 128 characters, so a
+    // longer candidate can never match and must not cost a PBKDF2 run.
+    // This returns false (caller maps it to the generic 401), never an
+    // error, and it does not leak account existence: the same false is
+    // returned whether the account exists or not.
+    if (typeof password !== 'string' || password.length === 0 || password.length > 128) return false
+    const parsed = parsePbkdf2Hash(stored)
+    if (!parsed) return false
     const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
     const bits = new Uint8Array(
-      await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256),
+      await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: parsed.salt, iterations: parsed.iterations, hash: 'SHA-256' }, key, 256),
     )
-    if (bits.length !== expected.length) return false
+    if (bits.length !== parsed.expected.length) return false
     let diff = 0
-    for (let i = 0; i < bits.length; i++) diff |= bits[i] ^ expected[i]
+    for (let i = 0; i < bits.length; i++) diff |= bits[i] ^ parsed.expected[i]
     return diff === 0
   } catch {
     return false
