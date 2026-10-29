@@ -282,3 +282,49 @@ backups. A backup that has never been restored is not a backup.
   session lifetime is enforced, server-side and in the cookie.
 - **Email delivery, Google login, and admin tools are NOT included.**
   They are separate future phases, each needing their own review.
+
+## Appendix: GitHub Actions workflow (paste-ready)
+
+Copy the block below exactly into `.github/workflows/ci.yml` via the
+GitHub website (section 11). It runs tests and checks only; it deploys
+nothing.
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check JavaScript syntax
+        run: |
+          node --check worker/src/index.js
+          node --check worker/src/handlers.js
+          node --check worker/src/crypto.js
+          node --check worker/src/security.js
+          node --check worker/src/db.js
+          node --check app.js
+          node --check config.js
+      - name: Run tests
+        run: node --test tests/*.test.js
+      - name: Check frontend references
+        run: |
+          test -f index.html
+          test -f styles.css
+          test -f app.js
+          test -f config.js
+          test -f logo.js
+          test -f qr-lib.js
+          grep -q "https://payments.kluzar.com" config.js
+          grep -q "https://account-api.kluzar.com" config.js
+```
