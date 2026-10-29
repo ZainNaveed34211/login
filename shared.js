@@ -35,6 +35,12 @@
   const isNameOk = (v) => v === '' || (typeof v === 'string' && v.length <= 100 && !/[<>&\u0000-\u001F\u007F]/.test(v))
   const isPhoneOk = (v) => v === '' || (typeof v === 'string' && v.length <= 50 && /[0-9]/.test(v) && /^[0-9+\s().-]+$/.test(v))
   const $ = (id) => document.getElementById(id)
+  // Safe setters: a missing element must never abort a whole page. This
+  // matters when a browser serves a new HTML file with a cached older JS
+  // file (or vice versa) — one absent element used to throw here and stop
+  // the dashboard before the subscription section could render.
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value }
+  const setHidden = (id, hidden) => { const el = $(id); if (el) el.classList.toggle('hidden', hidden) }
   const go = (page) => { window.location.href = page }
   function showError(msg) {
     const el = $('global-error')
@@ -131,32 +137,31 @@
     URL.revokeObjectURL(a.href)
   }
   function renderEntitlement(ent) {
-    $('entitlement-loading').classList.add('hidden')
+    setHidden('entitlement-loading', true)
     if (!ent) {
-      $('entitlement-error').classList.remove('hidden')
-      $('entitlement-content').classList.add('hidden')
+      setHidden('entitlement-error', false)
+      setHidden('entitlement-content', true)
       return
     }
-    $('entitlement-error').classList.add('hidden')
-    $('entitlement-content').classList.remove('hidden')
-    $('ent-plan').textContent = ent.plan
-    $('ent-status').textContent = ent.status
-    $('ent-note').textContent = ent.premium
+    setHidden('entitlement-error', true)
+    setHidden('entitlement-content', false)
+    setText('ent-plan', ent.plan)
+    setText('ent-status', ent.status)
+    setText('ent-note', ent.premium
       ? 'You already have Premium access. Get Premium is hidden because your plan already grants it.'
-      : 'You are on the free plan. Get Premium to unlock deeper scans, premium findings and branded reports.'
+      : 'You are on the free plan. Get Premium to unlock deeper scans, premium findings and branded reports.')
     const btn = $('get-premium-btn')
     // Show only when server-verified Free, hide when paid. Loading/error
     // states above never assume Free or paid.
-    btn.classList.toggle('hidden', !!ent.premium)
-    btn.href = PAYMENTS_URL
+    if (btn) { btn.classList.toggle('hidden', !!ent.premium); btn.href = PAYMENTS_URL }
   }
   async function loadDashboard() {
     const session = await requireSession()
     if (!session) return
-    $('dash-email').textContent = session.user.email
-    $('dash-name').textContent = [session.user.firstName, session.user.lastName].filter(Boolean).join(' ') || '—'
-    $('dash-phone').textContent = session.user.phone || '—'
-    $('dash-mfa').textContent = session.user.mfaEnabled ? 'On' : 'Off'
+    setText('dash-email', session.user.email)
+    setText('dash-name', [session.user.firstName, session.user.lastName].filter(Boolean).join(' ') || '—')
+    setText('dash-phone', session.user.phone || '—')
+    setText('dash-mfa', session.user.mfaEnabled ? 'On' : 'Off')
     renderEntitlement(session.entitlement)
     const logoutAll = $('dash-logout-all')
     if (logoutAll) logoutAll.addEventListener('click', async () => {
