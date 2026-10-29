@@ -178,7 +178,7 @@ export async function handleRequest(request, env) {
       const email = normalizeEmail(body.email)
       const password = body.password
       if (!isValidEmail(email) || !isValidPassword(password)) {
-        return errorResponse(env, request, 400, 'Please enter a valid email and a password of at least 12 characters.', 'VALIDATION')
+        return errorResponse(env, request, 400, 'Please enter a valid email and a password of 12 to 128 characters with an uppercase letter, a lowercase letter, a number, and a symbol.', 'VALIDATION')
       }
       const existing = await getUserByEmail(env.DB, email)
       if (existing) {
@@ -379,7 +379,7 @@ export async function handleRequest(request, env) {
         const res = await verifyMfaCode(env.DB, env, session.user, body.mfaCode)
         if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
       }
-      if (!isValidPassword(body.newPassword)) return errorResponse(env, request, 400, 'New password must be at least 12 characters.', 'VALIDATION')
+      if (!isValidPassword(body.newPassword)) return errorResponse(env, request, 400, 'New password must be 12 to 128 characters and include an uppercase letter, a lowercase letter, a number, and a symbol.', 'VALIDATION')
       const newHash = await hashPassword(body.newPassword, iterations(env))
       await env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').bind(newHash, nowIso(), session.user.id).run()
       // Rotate current session, revoke all others.
@@ -416,7 +416,7 @@ export async function handleRequest(request, env) {
       if (!checkRate(env, request, 'reset')) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
       if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const body = await readJson(request)
-      if (!isValidPassword(body.newPassword)) return errorResponse(env, request, 400, 'New password must be at least 12 characters.', 'VALIDATION')
+      if (!isValidPassword(body.newPassword)) return errorResponse(env, request, 400, 'New password must be 12 to 128 characters and include an uppercase letter, a lowercase letter, a number, and a symbol.', 'VALIDATION')
       const tx = await consumeOneTimeToken(env.DB, 'recovery_transactions', body.recoveryToken)
       if (!tx) return errorResponse(env, request, 400, 'Invalid or expired recovery link.', 'INVALID_RECOVERY')
       const user = await getUserById(env.DB, tx.user_id)

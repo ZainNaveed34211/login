@@ -30,7 +30,7 @@
   // Never send obviously invalid input to the API, and never render
   // user input as HTML (see sessions list below).
   const isEmailFormat = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) && v.length <= 254
-  const isPasswordOk = (v) => typeof v === 'string' && v.length >= 12 && v.length <= 128
+  const isPasswordOk = (v) => typeof v === 'string' && v.length >= 12 && v.length <= 128 && /[a-z]/.test(v) && /[A-Z]/.test(v) && /[0-9]/.test(v) && /[^A-Za-z0-9]/.test(v)
   const isCodeFormat = (v) => /^\d{6}$/.test(String(v || '').trim())
   const isNameOk = (v) => v === '' || (typeof v === 'string' && v.length <= 100 && !/[<>&\u0000-\u001F\u007F]/.test(v))
   const isPhoneOk = (v) => v === '' || (typeof v === 'string' && v.length <= 50 && /[0-9]/.test(v) && /^[0-9+\s().-]+$/.test(v))
@@ -154,7 +154,6 @@
     const session = await requireSession()
     if (!session) return
     $('dash-email').textContent = session.user.email
-    $('dash-verified').textContent = session.user.emailVerified ? 'Email verified' : 'Email not yet verified (verification is not implemented in this phase)'
     $('dash-name').textContent = [session.user.firstName, session.user.lastName].filter(Boolean).join(' ') || '—'
     $('dash-phone').textContent = session.user.phone || '—'
     $('dash-mfa').textContent = session.user.mfaEnabled ? 'On' : 'Off'
@@ -253,7 +252,7 @@
         const email = $('signup-email').value.trim()
         const password = $('signup-password').value
         if (!isEmailFormat(email)) { showError('Please enter a valid email address.'); return }
-        if (!isPasswordOk(password)) { showError('Password must be between 12 and 128 characters.'); return }
+        if (!isPasswordOk(password)) { showError('Password must be 12 to 128 characters and include an uppercase letter, a lowercase letter, a number, and a symbol.'); return }
         if (password !== $('signup-password2').value) { showError('Passwords do not match.'); return }
         try {
           const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
@@ -363,7 +362,7 @@
       if (!recoveryToken) { go('/forget-password/'); return }
       $('form-reset').addEventListener('submit', async (e) => {
         e.preventDefault()
-        if (!isPasswordOk($('reset-password').value)) { showError('Password must be between 12 and 128 characters.'); return }
+        if (!isPasswordOk($('reset-password').value)) { showError('Password must be 12 to 128 characters and include an uppercase letter, a lowercase letter, a number, and a symbol.'); return }
         if ($('reset-password').value !== $('reset-password2').value) { showError('Passwords do not match.'); return }
         try {
           await api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ recoveryToken, newPassword: $('reset-password').value }) })
@@ -398,7 +397,7 @@
       $('form-password-change').addEventListener('submit', async (e) => {
         e.preventDefault()
         if (!isCodeFormat($('change-mfa').value)) { showError('Enter the 6-digit authenticator code.'); return }
-        if (!isPasswordOk($('change-new').value)) { showError('Password must be between 12 and 128 characters.'); return }
+        if (!isPasswordOk($('change-new').value)) { showError('Password must be 12 to 128 characters and include an uppercase letter, a lowercase letter, a number, and a symbol.'); return }
         try {
           await api('/auth/password/change', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('change-current').value, mfaCode: $('change-mfa').value.trim(), newPassword: $('change-new').value }) })
           go('/dashboard/')

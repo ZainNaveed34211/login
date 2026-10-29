@@ -17,10 +17,13 @@
 <div id="global-error" class="alert error hidden" role="alert"></div>
 <div id="global-info" class="alert info hidden" role="status"></div>
 <section class="view">
-<h1>Your account</h1>
+<div class="dash-hero">
+<h1>Welcome back</h1>
+<p class="lead">Your profile, subscription and security — managed from your Kluzar account.</p>
+</div>
 <div class="card">
 <h2>Profile</h2>
-<p><strong>Email:</strong> <span id="dash-email"></span> · <span id="dash-verified"></span></p>
+<p><strong>Email:</strong> <span id="dash-email"></span></p>
 <p><strong>Name:</strong> <span id="dash-name"></span> · <strong>Phone:</strong> <span id="dash-phone"></span></p>
 <p><strong>Authenticator:</strong> <span id="dash-mfa"></span></p>
 <a class="btn-secondary" href="/profile/">Edit profile</a>
@@ -37,12 +40,16 @@
 </div>
 <div class="card">
 <h2>Security</h2>
+<div class="action-row">
 <a class="btn-secondary" href="/change-password/">Change password</a>
 <a class="btn-secondary" href="/authenticator/">Manage authenticator</a>
 <a class="btn-secondary" href="/sessions/">Active sessions</a>
 <a class="btn-secondary" href="/recovery-codes/regenerate/">Regenerate recovery codes</a>
 </div>
+</div>
+<div class="dash-foot">
 <button type="button" class="btn-secondary" id="dash-logout-all">Log out of all devices</button>
+</div>
 </section>
 </main>
 <footer class="footer" id="site-footer"></footer>

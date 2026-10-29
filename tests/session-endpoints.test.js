@@ -10,7 +10,7 @@ import { call } from './helpers.js'
 const PROTECTED = [
   ['GET', '/auth/session', undefined],
   ['POST', '/auth/logout-all', {}],
-  ['POST', '/auth/password/change', { currentPassword: 'x', mfaCode: '123456', newPassword: 'long-enough-password-123' }],
+  ['POST', '/auth/password/change', { currentPassword: 'x', mfaCode: '123456', newPassword: 'Long-enough-Password-123!' }],
   ['POST', '/auth/recovery-codes/regenerate', { currentPassword: 'x', mfaCode: '123456' }],
   ['POST', '/auth/mfa/disable', { currentPassword: 'x', mfaCode: '123456' }],
   ['POST', '/auth/mfa/setup', {}],
@@ -41,7 +41,7 @@ test('public token endpoints still require their own one-time token, not just a 
   assert.equal(setup.status, 401)
   const verify = await call(env, '/auth/mfa/verify', 'POST', { code: '123456' }, { ip: '10.9.0.2' })
   assert.equal(verify.status, 401)
-  const reset = await call(env, '/auth/password/reset', 'POST', { recoveryToken: 'guessed-token', newPassword: 'long-enough-password-123' }, { ip: '10.9.0.2' })
+  const reset = await call(env, '/auth/password/reset', 'POST', { recoveryToken: 'guessed-token', newPassword: 'Long-enough-Password-123!' }, { ip: '10.9.0.2' })
   assert.equal(reset.status, 400)
   assert.ok(!reset.data.user, 'reset with a guessed token must not return a user')
 })

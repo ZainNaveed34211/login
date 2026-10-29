@@ -12,9 +12,9 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 
 test('logout invalidates the old cookie; logout-all invalidates all devices; fresh login works', async () => {
   const { env } = fresh()
-  const { secret } = await registerAndActivate(env, 'sess@example.com', 'correct horse battery staple')
-  const a = await loginWithMfa(env, 'sess@example.com', 'correct horse battery staple', secret, '10.3.0.1')
-  const b = await loginWithMfa(env, 'sess@example.com', 'correct horse battery staple', secret, '10.3.0.2')
+  const { secret } = await registerAndActivate(env, 'sess@example.com', 'Correct Horse Battery Staple 123!')
+  const a = await loginWithMfa(env, 'sess@example.com', 'Correct Horse Battery Staple 123!', secret, '10.3.0.1')
+  const b = await loginWithMfa(env, 'sess@example.com', 'Correct Horse Battery Staple 123!', secret, '10.3.0.2')
   resetRateLimits()
   const out = await call(env, '/auth/logout', 'POST', {}, { cookie: a.cookie, ip: '10.3.0.1' })
   assert.equal(out.status, 200)
@@ -28,7 +28,7 @@ test('logout invalidates the old cookie; logout-all invalidates all devices; fre
   const replayAll = await call(env, '/auth/session', 'GET', undefined, { cookie: b.cookie, ip: '10.3.0.2' })
   assert.equal(replayAll.status, 401, 'logout-all must invalidate every session')
   // Fresh login creates a new valid session; old cookies cannot revive it
-  const freshLogin = await loginWithMfa(env, 'sess@example.com', 'correct horse battery staple', secret, '10.3.0.3')
+  const freshLogin = await loginWithMfa(env, 'sess@example.com', 'Correct Horse Battery Staple 123!', secret, '10.3.0.3')
   assert.notEqual(freshLogin.cookie, b.cookie)
   const freshSession = await call(env, '/auth/session', 'GET', undefined, { cookie: freshLogin.cookie, ip: '10.3.0.3' })
   assert.equal(freshSession.status, 200)
@@ -36,8 +36,8 @@ test('logout invalidates the old cookie; logout-all invalidates all devices; fre
 
 test('expired session fails even if the cookie is replayed', async () => {
   const { db, env } = fresh()
-  const { secret } = await registerAndActivate(env, 'exp@example.com', 'correct horse battery staple')
-  const { cookie } = await loginWithMfa(env, 'exp@example.com', 'correct horse battery staple', secret)
+  const { secret } = await registerAndActivate(env, 'exp@example.com', 'Correct Horse Battery Staple 123!')
+  const { cookie } = await loginWithMfa(env, 'exp@example.com', 'Correct Horse Battery Staple 123!', secret)
   // Expire every session (setup session + login session) so the replayed
   // login cookie is the one being tested.
   for (const s of db.tables.sessions) s.expires_at = new Date(Date.now() - 1000).toISOString()
@@ -47,8 +47,8 @@ test('expired session fails even if the cookie is replayed', async () => {
 
 test('session lifetime is two days', async () => {
   const { db, env } = fresh()
-  const { secret } = await registerAndActivate(env, 'life@example.com', 'correct horse battery staple')
-  await loginWithMfa(env, 'life@example.com', 'correct horse battery staple', secret)
+  const { secret } = await registerAndActivate(env, 'life@example.com', 'Correct Horse Battery Staple 123!')
+  await loginWithMfa(env, 'life@example.com', 'Correct Horse Battery Staple 123!', secret)
   const s = db.tables.sessions[0]
   const diff = new Date(s.expires_at).getTime() - new Date(s.created_at).getTime()
   assert.ok(Math.abs(diff - 2 * 24 * 60 * 60 * 1000) < 60 * 1000, 'expiry must be ~2 days after creation')
@@ -56,12 +56,12 @@ test('session lifetime is two days', async () => {
 
 test('SQL injection cannot log in, and profile PATCH ignores client-supplied user IDs (no IDOR)', async () => {
   const { db, env } = fresh()
-  const a = await registerAndActivate(env, 'victim@example.com', 'correct horse battery staple')
-  const b = await registerAndActivate(env, 'attacker@example.com', 'correct horse battery staple')
+  const a = await registerAndActivate(env, 'victim@example.com', 'Correct Horse Battery Staple 123!')
+  const b = await registerAndActivate(env, 'attacker@example.com', 'Correct Horse Battery Staple 123!')
   resetRateLimits()
-  const injection = await call(env, '/auth/login', 'POST', { email: "' OR '1'='1", password: 'anything 123456' }, { ip: '10.3.0.5' })
+  const injection = await call(env, '/auth/login', 'POST', { email: "' OR '1'='1", password: 'Anything 123456!' }, { ip: '10.3.0.5' })
   assert.equal(injection.status, 401)
-  const { cookie, csrf } = await loginWithMfa(env, 'attacker@example.com', 'correct horse battery staple', b.secret)
+  const { cookie, csrf } = await loginWithMfa(env, 'attacker@example.com', 'Correct Horse Battery Staple 123!', b.secret)
   resetRateLimits()
   const patch = await call(env, '/account/profile', 'PATCH', { userId: a.userId, firstName: 'Hacked' }, { cookie, headers: { 'X-CSRF-Token': csrf }, ip: '10.3.0.6' })
   assert.equal(patch.status, 200)
@@ -73,8 +73,8 @@ test('SQL injection cannot log in, and profile PATCH ignores client-supplied use
 
 test('CSRF: state-changing requests without the session CSRF token fail', async () => {
   const { env } = fresh()
-  const { secret } = await registerAndActivate(env, 'csrf@example.com', 'correct horse battery staple')
-  const { cookie } = await loginWithMfa(env, 'csrf@example.com', 'correct horse battery staple', secret)
+  const { secret } = await registerAndActivate(env, 'csrf@example.com', 'Correct Horse Battery Staple 123!')
+  const { cookie } = await loginWithMfa(env, 'csrf@example.com', 'Correct Horse Battery Staple 123!', secret)
   resetRateLimits()
   const noToken = await call(env, '/account/profile', 'PATCH', { firstName: 'No' }, { cookie, ip: '10.3.0.7' })
   assert.equal(noToken.status, 403)
@@ -102,8 +102,8 @@ test('request-size limit and safe errors (no stack traces)', async () => {
 
 test('entitlements default to free, never fabricated as paid', async () => {
   const { env } = fresh()
-  const { secret } = await registerAndActivate(env, 'ent@example.com', 'correct horse battery staple')
-  const { cookie } = await loginWithMfa(env, 'ent@example.com', 'correct horse battery staple', secret)
+  const { secret } = await registerAndActivate(env, 'ent@example.com', 'Correct Horse Battery Staple 123!')
+  const { cookie } = await loginWithMfa(env, 'ent@example.com', 'Correct Horse Battery Staple 123!', secret)
   const ent = await call(env, '/account/entitlements', 'GET', undefined, { cookie, ip: '10.3.1.0' })
   assert.equal(ent.status, 200)
   assert.equal(ent.data.entitlement.plan, 'free')
@@ -128,8 +128,8 @@ test('frontend: Get Premium points to payments.kluzar.com, config is single-sour
 
 test('worker never returns hashes, secrets, or internal fields in public responses', async () => {
   const { env } = fresh()
-  const { secret } = await registerAndActivate(env, 'leak@example.com', 'correct horse battery staple')
-  const { cookie } = await loginWithMfa(env, 'leak@example.com', 'correct horse battery staple', secret)
+  const { secret } = await registerAndActivate(env, 'leak@example.com', 'Correct Horse Battery Staple 123!')
+  const { cookie } = await loginWithMfa(env, 'leak@example.com', 'Correct Horse Battery Staple 123!', secret)
   const session = await call(env, '/auth/session', 'GET', undefined, { cookie, ip: '10.3.1.1' })
   const text = JSON.stringify(session.data)
   assert.ok(!text.includes('password_hash'))

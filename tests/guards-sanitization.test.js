@@ -75,7 +75,13 @@ test('sanitization: backend rejects markup in names and bad phone characters', (
   assert.equal(isValidEmail('zain@example.com'), true)
   assert.equal(isValidEmail('not-an-email'), false)
   assert.equal(isValidPassword('short'), false)
-  assert.equal(isValidPassword('long-enough-password-123'), true)
+  assert.equal(isValidPassword('Long-enough-Password-123!'), true)
+  // Simple passwords must be rejected even at 12+ characters: mixed
+  // characters (lowercase, uppercase, digit, symbol) are required.
+  assert.equal(isValidPassword('aaaaaaaaaaaa'), false)
+  assert.equal(isValidPassword('123456789012'), false)
+  assert.equal(isValidPassword('long-enough-password-123'), false)
+  assert.equal(isValidPassword('LongEnoughPassword'), false)
   assert.equal(isValidPassword('x'.repeat(129)), false)
 })
 

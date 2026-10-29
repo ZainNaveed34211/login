@@ -12,7 +12,12 @@ body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-
 .brand img { height: 36px; width: auto; display: block; }
 .topnav { display: flex; gap: 8px; }
 .shell { max-width: 720px; margin: 0 auto; padding: 28px 20px 48px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(20,18,50,.05); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(20,18,50,.05); }
+.dash-hero { margin-bottom: 24px; }
+.dash-hero .lead { margin-bottom: 0; }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.action-row .btn-secondary { margin: 0; }
+.dash-foot { margin-top: 8px; }
 .view.hidden, .hidden { display: none !important; }
 h1 { font-size: 28px; margin: 0 0 8px; }
 h2 { font-size: 20px; margin: 0 0 8px; }
@@ -25,7 +30,7 @@ button, .btn-primary, .btn-secondary, .btn-danger { cursor: pointer; font-weight
 .btn-primary { background: linear-gradient(135deg, var(--navy), var(--violet)); color: #fff; border: none; box-shadow: 0 6px 16px rgba(124,92,255,.28); display: inline-block; text-decoration: none; }
 .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
 .btn-primary:disabled { opacity: .6; cursor: wait; }
-.btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); margin: 6px 6px 6px 0; }
+.btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); margin: 6px 6px 6px 0; display: inline-block; text-decoration: none; }
 .btn-danger { background: #fff; color: var(--danger); border: 1px solid var(--danger); }
 .nav-btn { background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; min-height: 40px; font-size: 14px; }
 .link { background: none; border: none; color: var(--violet); font-weight: 700; padding: 0; min-height: auto; text-decoration: underline; }

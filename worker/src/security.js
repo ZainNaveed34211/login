@@ -132,7 +132,14 @@ export function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) && email.length <= 254
 }
 export function isValidPassword(password) {
-  return typeof password === 'string' && password.length >= 12 && password.length <= 128
+  // Length alone is not enough: a simple password like 12 repeated
+  // characters must be rejected. Require mixed characters — at least one
+  // lowercase, one uppercase, one digit, and one symbol (any character
+  // that is not a letter or digit). The frontend uses the identical rule
+  // (shared.js isPasswordOk) so the user is told before submitting, and
+  // the server re-checks it — client-side checks alone are never trusted.
+  return typeof password === 'string' && password.length >= 12 && password.length <= 128 &&
+    /[a-z]/.test(password) && /[A-Z]/.test(password) && /[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)
 }
 export function isValidName(name) {
   // Length only is not enough: a name must never contain markup or
