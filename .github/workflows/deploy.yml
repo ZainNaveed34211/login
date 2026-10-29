@@ -19,9 +19,9 @@ jobs:
           node-version: 20
       - name: Run tests first (deploy only if all pass)
         run: node --test tests/*.test.js
-      - name: Inject the real D1 ID from the GitHub secret (runner only, never committed)
+      - name: Inject the real D1 ID from the GitHub variable (runner only, never committed, never a file edit)
         run: |
-          sed -i "s/REPLACE_WITH_REAL_D1_DATABASE_ID/${{ secrets.KLUZAR_ACCOUNTS_D1_ID }}/" wrangler.toml
+          sed -i "s/REPLACE_WITH_REAL_D1_DATABASE_ID/${{ vars.KLUZAR_ACCOUNTS_D1_ID }}/" wrangler.toml
           grep -q "database_id" wrangler.toml
           if grep -q "REPLACE_WITH_REAL_D1_DATABASE_ID" wrangler.toml; then
             echo "D1 ID was not replaced" >&2
