@@ -1,0 +1,19 @@
+# Cloudflare Worker configuration for account-api.kluzar.com.
+# DO NOT put secrets in this file. Secrets are set with `wrangler secret put`.
+# The D1 database_id below is a PLACEHOLDER — replace it with the real ID
+# after creating the D1 database (see docs/MANUAL-CLOUDFLARE-SETUP.md).
+# Do NOT deploy with the placeholder ID.
+name = "kluzar-account-api"
+main = "worker/src/index.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kluzar-accounts"
+database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
+
+[vars]
+ALLOWED_ORIGINS = "https://accounts.kluzar.com"
+ALLOW_LOCALHOST = "false"
+ALLOW_INSECURE_COOKIE = "false"
+PBKDF2_ITERATIONS = "600000"

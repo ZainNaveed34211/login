@@ -1,0 +1,4 @@
+QR code rendering library: qrcode (MIT, https://github.com/soldair/node-qrcode)
+Bundled for browser use as qr-lib.js (window.KluzarQRCode). The bundle renders
+QR codes locally in the browser from the otpauth URL; the MFA secret is never
+sent to any external service for QR generation.
