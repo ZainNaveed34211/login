@@ -21,7 +21,10 @@
 <p class="lead" id="mfa-manage-status"></p>
 <form id="form-mfa-disable">
 <label for="disable-current">Current password</label>
+<div class="password-field">
 <input id="disable-current" type="password" autocomplete="current-password" required />
+<button type="button" class="pw-toggle" data-for="disable-current" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <label for="disable-mfa">Authenticator code</label>
 <input id="disable-mfa" type="text" autocomplete="one-time-code" required />
 <button type="submit" class="btn-danger">Disable authenticator</button>

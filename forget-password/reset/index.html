@@ -19,9 +19,15 @@
 <p class="lead">This is a separate page from the code check. Your recovery step is short-lived and single-use — set the new password now.</p>
 <form id="form-reset">
 <label for="reset-password">New password</label>
+<div class="password-field">
 <input id="reset-password" type="password" autocomplete="new-password" required />
+<button type="button" class="pw-toggle" data-for="reset-password" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <label for="reset-password2">Repeat new password</label>
+<div class="password-field">
 <input id="reset-password2" type="password" autocomplete="new-password" required />
+<button type="button" class="pw-toggle" data-for="reset-password2" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <button type="submit" class="btn-primary">Set new password →</button>
 </form>
 </section>

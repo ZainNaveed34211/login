@@ -21,7 +21,10 @@
 <p class="lead">To set up a new authenticator, first confirm your current password on this page.</p>
 <form id="form-setup-password">
 <label for="setup-current-password">Current password</label>
+<div class="password-field">
 <input id="setup-current-password" type="password" autocomplete="current-password" required />
+<button type="button" class="pw-toggle" data-for="setup-current-password" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <button type="submit" class="btn-primary">Continue →</button>
 </form>
 </div>

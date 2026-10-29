@@ -21,7 +21,10 @@
 <p class="lead">This replaces all previous recovery codes. Old codes will stop working immediately after new codes are confirmed by the server.</p>
 <form id="form-recovery-regen">
 <label for="regen-current">Current password</label>
+<div class="password-field">
 <input id="regen-current" type="password" autocomplete="current-password" required />
+<button type="button" class="pw-toggle" data-for="regen-current" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <label for="regen-mfa">Authenticator code</label>
 <input id="regen-mfa" type="text" autocomplete="one-time-code" required />
 <button type="submit" class="btn-primary">Generate new codes →</button>

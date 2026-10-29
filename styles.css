@@ -49,3 +49,10 @@ form button[type="submit"] { margin-top: 18px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+/* Password visibility toggle: small eye button inside the password field. */
+.password-field { position: relative; }
+.password-field input { padding-right: 48px; }
+.pw-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; min-height: 36px; padding: 0; border: none; background: transparent; color: var(--muted); display: flex; align-items: center; justify-content: center; border-radius: 8px; }
+.pw-toggle:hover { color: var(--text); background: var(--bg); }
+.pw-toggle:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.pw-toggle svg { width: 20px; height: 20px; display: block; }

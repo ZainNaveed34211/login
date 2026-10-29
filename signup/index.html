@@ -21,9 +21,15 @@
 <label for="signup-email">Email address</label>
 <input id="signup-email" type="email" autocomplete="email" required placeholder="you@example.com" />
 <label for="signup-password">Password</label>
+<div class="password-field">
 <input id="signup-password" type="password" autocomplete="new-password" required />
+<button type="button" class="pw-toggle" data-for="signup-password" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <label for="signup-password2">Repeat password</label>
+<div class="password-field">
 <input id="signup-password2" type="password" autocomplete="new-password" required />
+<button type="button" class="pw-toggle" data-for="signup-password2" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
 <button type="submit" class="btn-primary">Create account →</button>
 </form>
 <p class="muted">Already have an account? <button type="button" class="link" id="back-to-login">Sign in</button></p>
