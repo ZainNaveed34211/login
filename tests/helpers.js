@@ -5,7 +5,10 @@ import { resetRateLimits } from '../worker/src/security.js'
 
 export async function call(env, path, method = 'GET', body = undefined, opts = {}) {
   const headers = {
-    Origin: opts.origin || 'http://localhost:3000',
+    // opts.origin === null means "send no Origin header at all", for
+    // testing fail-closed Origin handling. Anything else defaults to
+    // the test frontend origin, as before.
+    ...(opts.origin === null ? {} : { Origin: opts.origin || 'http://localhost:3000' }),
     'CF-Connecting-IP': opts.ip || '127.0.0.1',
     'User-Agent': opts.userAgent || 'test-agent',
     ...(opts.headers || {}),

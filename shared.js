@@ -88,7 +88,17 @@
     if (footer) footer.innerHTML = '<p>Kluzar Accounts · Your Business, Online &amp; Managed.</p>'
   }
   async function logout() {
-    try { await api('/auth/logout', { method: 'POST', body: JSON.stringify({}) }) } catch { /* ignore */ }
+    // Server now requires the session CSRF token on logout (see
+    // handlers.js). Fetch it fresh from GET /auth/session first; if
+    // that fails there is no session to revoke, so just clear locally.
+    // Old Worker versions ignore the extra header, so deploying this
+    // frontend BEFORE the Worker change is safe; deploying the Worker
+    // first would leave the server session alive while the browser
+    // appears logged out.
+    try {
+      const s = await api('/auth/session', { method: 'GET' })
+      if (s.csrfToken) await api('/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': s.csrfToken }, body: JSON.stringify({}) })
+    } catch { /* ignore: local clear + redirect below still runs */ }
     S.clear()
     go('/login/')
   }
@@ -100,7 +110,13 @@
   async function redirectIfAuthed() {
     try {
       const s = await api('/auth/session', { method: 'GET' })
-      if (s.authenticated) { go('/dashboard/'); return true }
+      // Never trust a client-editable flag alone: api() already throws on
+      // any non-2xx status, so this runs only on a server-verified 200
+      // response, and the dashboard itself re-verifies the session
+      // server-side before showing any data. Editing `authenticated`
+      // in DevTools or a proxy can at most show an empty shell locally —
+      // it can never make the server return another account's data.
+      if (s.ok && s.authenticated) { go('/dashboard/'); return true }
     } catch { /* not logged in - continue with the page's own guard */ }
     return false
   }
@@ -288,7 +304,7 @@
         $('form-setup-password').addEventListener('submit', async (e) => {
           e.preventDefault()
           try {
-            const data = await api('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ currentPassword: $('setup-current-password').value }) })
+            const data = await api('/auth/mfa/setup', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('setup-current-password').value }) })
             $('setup-current-password').value = ''
             $('setup-password-box').classList.add('hidden')
             await renderSetup(data)
@@ -306,7 +322,12 @@
         if (!isCodeFormat($('mfa-setup-code').value)) { showError('Enter the 6-digit authenticator code.'); return }
         try {
           if (sessionMode) {
-            await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: $('mfa-setup-code').value.trim() }) })
+            // Authenticated re-setup verify now requires CSRF on the
+            // server. The session object from the setup step is not in
+            // scope here, so fetch a fresh token first (same pattern
+            // as logout()).
+            const s = await api('/auth/session', { method: 'GET' })
+            await api('/auth/mfa/verify', { method: 'POST', headers: { 'X-CSRF-Token': s.csrfToken }, body: JSON.stringify({ code: $('mfa-setup-code').value.trim() }) })
             go('/dashboard/')
             return
           }

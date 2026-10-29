@@ -16,7 +16,9 @@ test('logout invalidates the old cookie; logout-all invalidates all devices; fre
   const a = await loginWithMfa(env, 'sess@example.com', 'Correct Horse Battery Staple 123!', secret, '10.3.0.1')
   const b = await loginWithMfa(env, 'sess@example.com', 'Correct Horse Battery Staple 123!', secret, '10.3.0.2')
   resetRateLimits()
-  const out = await call(env, '/auth/logout', 'POST', {}, { cookie: a.cookie, ip: '10.3.0.1' })
+  // Logout now requires CSRF (hardening): the frontend fetches the
+  // token from GET /auth/session and sends it, as in shared.js logout().
+  const out = await call(env, '/auth/logout', 'POST', {}, { cookie: a.cookie, headers: { 'X-CSRF-Token': a.csrf }, ip: '10.3.0.1' })
   assert.equal(out.status, 200)
   const replay = await call(env, '/auth/session', 'GET', undefined, { cookie: a.cookie, ip: '10.3.0.1' })
   assert.equal(replay.status, 401, 'logged-out cookie must fail')
