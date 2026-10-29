@@ -143,3 +143,24 @@ test('deploy method: D1 ID comes from a GitHub variable, never a secret, never a
   assert.ok(wrangler.includes('REPLACE_WITH_REAL_D1_DATABASE_ID'), 'wrangler.toml must keep the placeholder, never a real ID')
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(wrangler), 'wrangler.toml must not contain a real D1 ID')
 })
+
+test('logo/favicon rule: every index page and 404 loads favicon.js, and favicon.js is the exact main-site favicon', () => {
+  const pages = [
+    'index.html', '404.html',
+    'login/index.html', 'login/password/index.html', 'login/code/index.html',
+    'signup/index.html', 'mfa-setup/index.html', 'recovery-codes/index.html',
+    'forget-password/index.html', 'forget-password/reset/index.html',
+    'dashboard/index.html', 'profile/index.html', 'change-password/index.html',
+    'authenticator/index.html', 'sessions/index.html',
+    'recovery-codes/regenerate/index.html', 'expired/index.html',
+  ]
+  assert.equal(pages.length, 17)
+  for (const page of pages) {
+    const html = readFileSync(path.join(root, `../${page}`), 'utf8')
+    assert.ok(html.includes('<script src="/favicon.js"></script>'), `${page} must load favicon.js`)
+  }
+  const faviconJs = readFileSync(path.join(root, '../favicon.js'), 'utf8')
+  assert.ok(faviconJs.includes('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAG9CAYAAABjxM7'), 'favicon.js must start with the exact main-site favicon data')
+  assert.ok(faviconJs.includes("setFavicon('icon'"), 'favicon.js must set the tab icon')
+  assert.ok(faviconJs.includes("setFavicon('apple-touch-icon'"), 'favicon.js must set the touch icon')
+})
