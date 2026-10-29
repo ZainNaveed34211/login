@@ -6,6 +6,7 @@
 <title>Kluzar Accounts — Dashboard</title>
 <link rel="stylesheet" href="/styles.css" />
 <style>body{visibility:hidden}</style>
+<script>(function(){try{fetch('https://account-api.kluzar.com/auth/session',{credentials:'include'}).then(function(r){if(!r.ok){window.location.href='/login/'}}).catch(function(){window.location.href='/login/'})}catch(e){window.location.href='/login/'}})();</script>
 <script src="/config.js"></script>
 <script src="/logo.js"></script>
 </head>

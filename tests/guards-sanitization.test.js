@@ -112,3 +112,34 @@ test('session on every page: recovery-codes without codes goes to dashboard if l
   assert.ok(block.includes("go('/dashboard/')"), 'recovery-codes without codes must go to dashboard when logged in')
   assert.ok(block.includes("go('/login/')"), 'recovery-codes without codes must go to login when logged out')
 })
+
+test('production copy: 404 page must not contain internal talk about clean paths or .html addresses', () => {
+  const html = readFileSync(path.join(root, '../404.html'), 'utf8')
+  assert.ok(!html.includes('clean path'), '404 must not mention clean paths - that is internal talk')
+  assert.ok(!html.includes('.html in the address'), '404 must not mention .html addresses')
+  assert.ok(html.includes('Page not found'), '404 must still say the page was not found')
+  assert.ok(html.includes('/login/'), '404 must link to sign-in')
+})
+
+test('redirect fix: every protected page has an inline session guard in <head>, independent of shared.js', () => {
+  for (const folder of ['dashboard', 'profile', 'change-password', 'authenticator', 'sessions', 'recovery-codes/regenerate']) {
+    const html = readFileSync(path.join(root, `../${folder}/index.html`), 'utf8')
+    const head = html.split('<body')[0]
+    assert.ok(head.includes("fetch('https://account-api.kluzar.com/auth/session'"), `${folder} must check the session inline in <head>`)
+    assert.ok(head.includes("window.location.href='/login/'"), `${folder} inline guard must redirect to /login/ on failure`)
+  }
+  // Public pages must NOT get the inline session redirect (login/signup flows would break).
+  for (const folder of ['login', 'signup', 'forget-password']) {
+    const html = readFileSync(path.join(root, `../${folder}/index.html`), 'utf8')
+    assert.ok(!html.split('<body')[0].includes("fetch('https://account-api.kluzar.com/auth/session'"), `${folder} must not have an inline session redirect`)
+  }
+})
+
+test('deploy method: D1 ID comes from a GitHub variable, never a secret, never a file edit', () => {
+  const deploy = readFileSync(path.join(root, '../.github/workflows/deploy.yml'), 'utf8')
+  assert.ok(deploy.includes('vars.KLUZAR_ACCOUNTS_D1_ID'), 'deploy must use the GitHub variable for the D1 ID')
+  assert.ok(!deploy.includes('secrets.KLUZAR_ACCOUNTS_D1_ID'), 'deploy must not use a secret for the D1 ID')
+  const wrangler = readFileSync(path.join(root, '../wrangler.toml'), 'utf8')
+  assert.ok(wrangler.includes('REPLACE_WITH_REAL_D1_DATABASE_ID'), 'wrangler.toml must keep the placeholder, never a real ID')
+  assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(wrangler), 'wrangler.toml must not contain a real D1 ID')
+})
