@@ -31,11 +31,14 @@ to put it — never what the value is.
 git clone https://github.com/ZainNaveed34211/login.git
 cd login
 ls
-# Expected: index.html, styles.css, app.js, config.js, logo.js, qr-lib.js,
-#   wrangler.toml, worker/src/*.js, migrations/*.sql, tests/*.js,
-#   docs/MANUAL-CLOUDFLARE-SETUP.md
+# Expected: index.html (redirect to pages/login-email.html), styles.css,
+#   shared.js, config.js, logo.js, qr-lib.js, pages/*.html (one page per
+#   account state), wrangler.toml, worker/src/*.js, migrations/*.sql,
+#   tests/*.js, docs/MANUAL-CLOUDFLARE-SETUP.md
+# Note: app.js from the first version is an orphan (unreferenced) on main;
+#   it can be deleted via the GitHub website. It is not loaded by any page.
 node --test tests/*.test.js
-# Expected: 23 tests, 23 pass, 0 fail (before any production setup)
+# Expected: 26 tests, 26 pass, 0 fail (before any production setup)
 ```
 
 ## 2. Create the D1 database (new, dedicated)
@@ -313,7 +316,7 @@ jobs:
           node --check worker/src/crypto.js
           node --check worker/src/security.js
           node --check worker/src/db.js
-          node --check app.js
+          node --check shared.js
           node --check config.js
       - name: Run tests
         run: node --test tests/*.test.js
@@ -321,7 +324,11 @@ jobs:
         run: |
           test -f index.html
           test -f styles.css
-          test -f app.js
+          test -f shared.js
+          test -f pages/login-email.html
+          test -f pages/forgot.html
+          test -f pages/forgot-reset.html
+          test -f pages/dashboard.html
           test -f config.js
           test -f logo.js
           test -f qr-lib.js

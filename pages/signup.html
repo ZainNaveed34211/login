@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kluzar Accounts — Create account</title>
+<link rel="stylesheet" href="../styles.css" />
+<script src="../config.js"></script>
+<script src="../logo.js"></script>
+</head>
+<body data-page="signup">
+<header class="topbar" id="site-header"></header>
+<main class="shell">
+<div id="global-error" class="alert error hidden" role="alert"></div>
+<div id="global-info" class="alert info hidden" role="status"></div>
+<section class="view card">
+<h1>Create your account</h1>
+<p class="lead">Your password must be at least 12 characters. You will set up an authenticator app next — that step is required before your account is activated.</p>
+<form id="form-signup">
+<label for="signup-email">Email address</label>
+<input id="signup-email" type="email" autocomplete="email" required placeholder="you@example.com" />
+<label for="signup-password">Password</label>
+<input id="signup-password" type="password" autocomplete="new-password" required />
+<label for="signup-password2">Repeat password</label>
+<input id="signup-password2" type="password" autocomplete="new-password" required />
+<button type="submit" class="btn-primary">Create account →</button>
+</form>
+<p class="muted">Already have an account? <button type="button" class="link" id="back-to-login">Sign in</button></p>
+</section>
+</main>
+<footer class="footer" id="site-footer"></footer>
+<script src="../shared.js"></script>
+</body>
+</html>

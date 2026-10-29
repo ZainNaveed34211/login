@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kluzar Accounts — Set new password</title>
+<link rel="stylesheet" href="../styles.css" />
+<script src="../config.js"></script>
+<script src="../logo.js"></script>
+</head>
+<body data-page="forgot-reset">
+<header class="topbar" id="site-header"></header>
+<main class="shell">
+<div id="global-error" class="alert error hidden" role="alert"></div>
+<div id="global-info" class="alert info hidden" role="status"></div>
+<section class="view card">
+<h1>Set a new password</h1>
+<p class="lead">This is a separate page from the code check. Your recovery step is short-lived and single-use — set the new password now.</p>
+<form id="form-reset">
+<label for="reset-password">New password</label>
+<input id="reset-password" type="password" autocomplete="new-password" required />
+<label for="reset-password2">Repeat new password</label>
+<input id="reset-password2" type="password" autocomplete="new-password" required />
+<button type="submit" class="btn-primary">Set new password →</button>
+</form>
+</section>
+</main>
+<footer class="footer" id="site-footer"></footer>
+<script src="../shared.js"></script>
+</body>
+</html>
