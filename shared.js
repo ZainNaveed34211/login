@@ -26,6 +26,14 @@
   const API = window.KLUZAR_CONFIG.API_BASE_URL
   const PAYMENTS_URL = window.KLUZAR_CONFIG.PAYMENTS_URL
   const S = window.sessionStorage
+  // Client-side checks only - the Worker re-checks everything server-side.
+  // Never send obviously invalid input to the API, and never render
+  // user input as HTML (see sessions list below).
+  const isEmailFormat = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) && v.length <= 254
+  const isPasswordOk = (v) => typeof v === 'string' && v.length >= 12 && v.length <= 128
+  const isCodeFormat = (v) => /^\d{6}$/.test(String(v || '').trim())
+  const isNameOk = (v) => v === '' || (typeof v === 'string' && v.length <= 100 && !/[<>&\u0000-\u001F\u007F]/.test(v))
+  const isPhoneOk = (v) => v === '' || (typeof v === 'string' && v.length <= 50 && /[0-9]/.test(v) && /^[0-9+\s().-]+$/.test(v))
   const $ = (id) => document.getElementById(id)
   const go = (page) => { window.location.href = page }
   function showError(msg) {
@@ -78,15 +86,21 @@
     S.clear()
     go('/login/')
   }
+  // FAIL CLOSED: a protected page must NEVER stay open when the session
+  // cannot be verified. 401, network failure, DNS failure, Worker not
+  // deployed yet, 500 - every failure means the same thing here: go back
+  // to /login/. Showing an error and staying on the page was the bug
+  // that let /dashboard/ open without a login.
   async function requireSession() {
     try {
       const session = await api('/auth/session', { method: 'GET' })
       renderChrome(true)
+      document.body.style.visibility = 'visible'
       return session
     } catch (err) {
       renderChrome(false)
-      if (err.status === 401) go('/expired/')
-      else showError(err.message)
+      S.setItem('kluzar_notice', 'Please sign in to continue.')
+      go('/login/')
       return null
     }
   }
@@ -146,12 +160,14 @@
   const page = document.body ? document.body.dataset.page : ''
   document.addEventListener('DOMContentLoaded', async () => {
     // Pages that need no session render chrome unauthenticated by default.
-    if (!['dashboard', 'profile', 'password-change', 'mfa-manage', 'sessions', 'recovery-regenerate'].includes(page)) renderChrome(false)
+    if (!['dashboard', 'profile', 'password-change', 'authenticator', 'sessions', 'recovery-regenerate'].includes(page)) renderChrome(false)
 
     if (page === 'login-email') {
       $('form-email').addEventListener('submit', (e) => {
         e.preventDefault()
-        S.setItem('kluzar_email', $('email-input').value.trim())
+        const email0 = $('email-input').value.trim()
+        if (!isEmailFormat(email0)) { showError('Please enter a valid email address.'); return }
+        S.setItem('kluzar_email', email0)
         S.setItem('kluzar_password_failures', '0')
         go('/login/password/')
       })
@@ -163,7 +179,7 @@
 
     if (page === 'login-password') {
       const email = S.getItem('kluzar_email') || ''
-      if (!email) { go('/login/'); return }
+      if (!isEmailFormat(email)) { S.removeItem('kluzar_email'); go('/login/'); return }
       $('password-email-label').textContent = email
       $('back-to-email').addEventListener('click', () => go('/login/'))
       $('go-forgot-2').addEventListener('click', () => go('/forget-password/'))
@@ -172,6 +188,7 @@
         try {
           const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password: $('password-input').value }) })
           S.setItem('kluzar_password_failures', '0')
+          S.removeItem('kluzar_email')
           if (data.setupRequired) { S.setItem('kluzar_setup_token', data.setupToken); go('/mfa-setup/'); return }
           if (data.mfaRequired) { S.setItem('kluzar_challenge_token', data.challengeToken); go('/login/code/'); return }
           go('/dashboard/')
@@ -182,6 +199,7 @@
           S.setItem('kluzar_password_failures', String(n))
           $('password-input').value = ''
           if (n >= 2) {
+            S.removeItem('kluzar_email')
             S.setItem('kluzar_password_failures', '0')
             S.setItem('kluzar_notice', 'Too many incorrect attempts in this flow. Please start again from your email address.')
             go('/login/')
@@ -196,6 +214,8 @@
         e.preventDefault()
         const email = $('signup-email').value.trim()
         const password = $('signup-password').value
+        if (!isEmailFormat(email)) { showError('Please enter a valid email address.'); return }
+        if (!isPasswordOk(password)) { showError('Password must be between 12 and 128 characters.'); return }
         if (password !== $('signup-password2').value) { showError('Passwords do not match.'); return }
         try {
           const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
@@ -241,6 +261,7 @@
       }
       $('form-mfa-setup').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isCodeFormat($('mfa-setup-code').value)) { showError('Enter the 6-digit authenticator code.'); return }
         try {
           if (sessionMode) {
             await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: $('mfa-setup-code').value.trim() }) })
@@ -260,6 +281,7 @@
       if (!challengeToken) { go('/login/'); return }
       $('form-mfa-verify').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isCodeFormat($('mfa-code').value)) { showError('Enter the 6-digit authenticator code.'); return }
         try {
           await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })
           S.removeItem('kluzar_challenge_token')
@@ -280,6 +302,8 @@
       $('forgot-email').value = S.getItem('kluzar_email') || ''
       $('form-forgot').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isEmailFormat($('forgot-email').value)) { showError('Please enter a valid email address.'); return }
+        if (!isCodeFormat($('forgot-code').value)) { showError('Enter the 6-digit authenticator or recovery code.'); return }
         try {
           const data = await api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email: $('forgot-email').value.trim(), code: $('forgot-code').value.trim() }) })
           if (data.recoveryToken) {
@@ -295,6 +319,7 @@
       if (!recoveryToken) { go('/forget-password/'); return }
       $('form-reset').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isPasswordOk($('reset-password').value)) { showError('Password must be between 12 and 128 characters.'); return }
         if ($('reset-password').value !== $('reset-password2').value) { showError('Passwords do not match.'); return }
         try {
           await api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ recoveryToken, newPassword: $('reset-password').value }) })
@@ -315,6 +340,7 @@
       $('profile-phone').value = session.user.phone || ''
       $('form-profile').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isNameOk($('profile-first').value) || !isNameOk($('profile-last').value) || !isPhoneOk($('profile-phone').value)) { showError('Profile details are invalid. Names must not contain <, > or & and phone must contain only digits, +, spaces, -, ( ) or .'); return }
         try {
           await api('/account/profile', { method: 'PATCH', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ firstName: $('profile-first').value, lastName: $('profile-last').value, phone: $('profile-phone').value }) })
           go('/dashboard/')
@@ -327,6 +353,8 @@
       if (!session) return
       $('form-password-change').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isCodeFormat($('change-mfa').value)) { showError('Enter the 6-digit authenticator code.'); return }
+        if (!isPasswordOk($('change-new').value)) { showError('Password must be between 12 and 128 characters.'); return }
         try {
           await api('/auth/password/change', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('change-current').value, mfaCode: $('change-mfa').value.trim(), newPassword: $('change-new').value }) })
           go('/dashboard/')
@@ -345,6 +373,7 @@
       })
       $('form-mfa-disable').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isCodeFormat($('disable-mfa').value)) { showError('Enter the 6-digit authenticator code.'); return }
         try {
           await api('/auth/mfa/disable', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('disable-current').value, mfaCode: $('disable-mfa').value.trim() }) })
           go('/dashboard/')
@@ -361,7 +390,11 @@
         list.innerHTML = ''
         data.sessions.forEach((s) => {
           const li = document.createElement('li')
-          li.innerHTML = `<span>${s.current ? '<strong>This device</strong> · ' : ''}Created ${new Date(s.created_at).toLocaleString()} · Expires ${new Date(s.expires_at).toLocaleString()}${s.user_agent ? ' · ' + s.user_agent.slice(0, 60) : ''}</span>`
+          const span = document.createElement('span')
+          // textContent only: user_agent comes from the browser and can
+          // contain markup. It must never be inserted as HTML.
+          span.textContent = (s.current ? 'This device · ' : '') + 'Created ' + new Date(s.created_at).toLocaleString() + ' · Expires ' + new Date(s.expires_at).toLocaleString() + (s.user_agent ? ' · ' + s.user_agent.slice(0, 60) : '')
+          li.appendChild(span)
           if (!s.current) {
             const btn = document.createElement('button')
             btn.type = 'button'; btn.className = 'btn-secondary'; btn.textContent = 'Revoke'
@@ -380,6 +413,7 @@
       if (!session) return
       $('form-recovery-regen').addEventListener('submit', async (e) => {
         e.preventDefault()
+        if (!isCodeFormat($('regen-mfa').value)) { showError('Enter the 6-digit authenticator code.'); return }
         try {
           const data = await api('/auth/recovery-codes/regenerate', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('regen-current').value, mfaCode: $('regen-mfa').value.trim() }) })
           renderRecoveryCodes(data.recoveryCodes || [], $('regen-list'))

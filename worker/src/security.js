@@ -135,7 +135,18 @@ export function isValidPassword(password) {
   return typeof password === 'string' && password.length >= 12 && password.length <= 128
 }
 export function isValidName(name) {
-  return name === undefined || name === null || (typeof name === 'string' && name.length <= 100)
+  // Length only is not enough: a name must never contain markup or
+  // control characters, even though the frontend renders it with
+  // textContent. Reject <, >, & and control characters outright.
+  return name === undefined || name === null || name === '' ||
+    (typeof name === 'string' && name.length <= 100 && !/[<>&\u0000-\u001F\u007F]/.test(name))
+}
+export function isValidPhone(phone) {
+  // Phone is optional. If present it may contain only digits and the
+  // usual phone punctuation, and must contain at least one digit.
+  // This rejects markup, letters and any other injected characters.
+  return phone === undefined || phone === null || phone === '' ||
+    (typeof phone === 'string' && phone.length <= 50 && /[0-9]/.test(phone) && /^[0-9+\s().-]+$/.test(phone))
 }
 export function publicUser(user) {
   if (!user) return null

@@ -39,6 +39,7 @@ import {
   ipHash,
   isValidEmail,
   isValidName,
+  isValidPhone,
   isValidPassword,
   jsonResponse,
   originOk,
@@ -89,7 +90,15 @@ async function requireSession(request, env) {
   if (!session) return { session: null, error: 'unauthorized' }
   return { session, error: null }
 }
+const ONE_TIME_TABLES = new Set(['setup_tokens', 'login_challenges', 'recovery_transactions'])
+function checkOneTimeTable(table) {
+  // Table names can never come from user input. Callers pass only the
+  // three hardcoded names above; anything else is a programming error
+  // and must fail rather than build a query from an unknown name.
+  if (!ONE_TIME_TABLES.has(table)) throw new Error('Invalid token table')
+}
 async function createOneTimeToken(db, table, userId, minutes) {
+  checkOneTimeTable(table)
   const token = randomToken(32)
   const hash = await sha256Hex(token)
   await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run()
@@ -100,6 +109,7 @@ async function createOneTimeToken(db, table, userId, minutes) {
   return token
 }
 async function consumeOneTimeToken(db, table, token) {
+  checkOneTimeTable(table)
   if (!token) return null
   const hash = await sha256Hex(token)
   const row = await db.prepare(`SELECT * FROM ${table} WHERE token_hash = ?`).bind(hash).first()
@@ -484,8 +494,8 @@ export async function handleRequest(request, env) {
       const firstName = body.firstName ?? session.user.first_name ?? ''
       const lastName = body.lastName ?? session.user.last_name ?? ''
       const phone = body.phone ?? session.user.phone ?? ''
-      if (!isValidName(firstName) || !isValidName(lastName) || (typeof phone !== 'string' || phone.length > 50)) {
-        return errorResponse(env, request, 400, 'Profile details are too long.', 'VALIDATION')
+      if (!isValidName(firstName) || !isValidName(lastName) || !isValidPhone(phone)) {
+        return errorResponse(env, request, 400, 'Profile details are invalid.', 'VALIDATION')
       }
       await env.DB.prepare('UPDATE users SET first_name = ?, last_name = ?, phone = ?, updated_at = ? WHERE id = ?')
         .bind(String(firstName).slice(0, 100), String(lastName).slice(0, 100), String(phone).slice(0, 50), nowIso(), session.user.id)
