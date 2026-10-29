@@ -3,8 +3,13 @@
 // Password hashing: PBKDF2-SHA256. Argon2id is preferred in principle, but
 // Cloudflare Workers has no native Argon2id and no vetted built-in library,
 // so adding an unvetted WASM Argon2 implementation would be a larger risk
-// than a correctly configured PBKDF2 (600,000 iterations, OWASP guidance).
-// PBKDF2_ITERATIONS may be lowered ONLY in tests via env (never in prod).
+// than a correctly configured PBKDF2. Production iterations are 100,000:
+// Workers Free native WebCrypto rejects PBKDF2 counts above 100,000, so
+// 600,000 (OWASP guidance) throws there even though it passes in Node.
+// The stored hash records its own iteration count, so iterations can be
+// raised again on a paid plan without breaking existing accounts.
+// PBKDF2_ITERATIONS is set via env in production; tests may use a lower
+// value via env for speed, never in prod.
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 

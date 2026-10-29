@@ -49,8 +49,13 @@ import {
 } from './security.js'
 
 function iterations(env) {
-  const n = parseInt(env.PBKDF2_ITERATIONS || '600000', 10)
-  return Number.isFinite(n) && n > 0 ? n : 600000
+  // Workers Free native WebCrypto rejects PBKDF2 iteration counts above
+  // 100000 (NotSupportedError), so the production default is 100000 — the
+  // platform maximum on the free plan. The stored hash records its own
+  // iteration count, so this can be raised again on a paid plan without
+  // breaking existing accounts.
+  const n = parseInt(env.PBKDF2_ITERATIONS || '100000', 10)
+  return Number.isFinite(n) && n > 0 ? n : 100000
 }
 function sessionCookie(token, env) {
   const insecure = env.ALLOW_INSECURE_COOKIE === 'true'
