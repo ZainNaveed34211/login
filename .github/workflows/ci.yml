@@ -25,17 +25,41 @@ jobs:
           node --check config.js
       - name: Run tests
         run: node --test tests/*.test.js
-      - name: Check frontend references
+      - name: Check frontend references (clean paths, no .html URLs)
         run: |
           test -f index.html
           test -f styles.css
           test -f shared.js
-          test -f config.js
-          test -f logo.js
-          test -f qr-lib.js
+          test -f .nojekyll
+          test -f 404.html
           test -f login/index.html
+          test -f login/password/index.html
+          test -f login/code/index.html
+          test -f signup/index.html
+          test -f mfa-setup/index.html
           test -f forget-password/index.html
           test -f forget-password/reset/index.html
           test -f dashboard/index.html
+          test -f profile/index.html
+          test -f change-password/index.html
+          test -f authenticator/index.html
+          test -f sessions/index.html
+          test -f recovery-codes/index.html
+          test -f recovery-codes/regenerate/index.html
+          test -f expired/index.html
+          test -f config.js
+          test -f logo.js
+          test -f qr-lib.js
           grep -q "https://payments.kluzar.com" config.js
           grep -q "https://account-api.kluzar.com" config.js
+      - name: No real D1 ID or secret in tracked files (fails the run if found)
+        run: |
+          grep -q "REPLACE_WITH_REAL_D1_DATABASE_ID" wrangler.toml
+          if grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" wrangler.toml; then
+            echo "Real D1 ID found in wrangler.toml - it must stay in a GitHub secret only" >&2
+            exit 1
+          fi
+          if grep -r "sk-live\|sk_test\|ghp_" --include="*.js" --include="*.html" --include="*.toml" .; then
+            echo "Secret-like value found in tracked files" >&2
+            exit 1
+          fi
