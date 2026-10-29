@@ -91,6 +91,20 @@
   // deployed yet, 500 - every failure means the same thing here: go back
   // to /login/. Showing an error and staying on the page was the bug
   // that let /dashboard/ open without a login.
+  async function redirectIfAuthed() {
+    try {
+      const s = await api('/auth/session', { method: 'GET' })
+      if (s.authenticated) { go('/dashboard/'); return true }
+    } catch { /* not logged in - continue with the page's own guard */ }
+    return false
+  }
+  // Protected pages: if the session dies mid-page (e.g. a form submit
+  // after expiry), go back to /login/ instead of showing a bare error.
+  function handleProtectedError(err) {
+    if (err && err.status === 401) { S.setItem('kluzar_notice', 'Please sign in to continue.'); go('/login/'); return true }
+    showError(err.message)
+    return false
+  }
   async function requireSession() {
     try {
       const session = await api('/auth/session', { method: 'GET' })
@@ -149,7 +163,7 @@
     if (logoutAll) logoutAll.addEventListener('click', async () => {
       try {
         await api('/auth/logout-all', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({}) })
-      } catch (err) { showError(err.message); return }
+      } catch (err) { handleProtectedError(err); return }
       S.clear()
       go('/login/')
     })
@@ -178,6 +192,7 @@
     }
 
     if (page === 'login-password') {
+      if (await redirectIfAuthed()) return
       const email = S.getItem('kluzar_email') || ''
       if (!isEmailFormat(email)) { S.removeItem('kluzar_email'); go('/login/'); return }
       $('password-email-label').textContent = email
@@ -209,6 +224,7 @@
     }
 
     if (page === 'signup') {
+      if (await redirectIfAuthed()) return
       $('back-to-login').addEventListener('click', () => go('/login/'))
       $('form-signup').addEventListener('submit', async (e) => {
         e.preventDefault()
@@ -277,6 +293,7 @@
     }
 
     if (page === 'mfa-verify') {
+      if (await redirectIfAuthed()) return
       const challengeToken = S.getItem('kluzar_challenge_token')
       if (!challengeToken) { go('/login/'); return }
       $('form-mfa-verify').addEventListener('submit', async (e) => {
@@ -292,13 +309,17 @@
 
     if (page === 'recovery-codes') {
       const codes = JSON.parse(S.getItem('kluzar_recovery_codes') || '[]')
-      if (!codes.length) { go('/login/'); return }
+      if (!codes.length) {
+        try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) go('/dashboard/'); else go('/login/') } catch { go('/login/') }
+        return
+      }
       renderRecoveryCodes(codes, $('recovery-list'))
       $('download-codes').addEventListener('click', () => downloadCodes(codes, 'kluzar-recovery-codes.txt'))
       $('recovery-done').addEventListener('click', () => { S.removeItem('kluzar_recovery_codes'); go('/dashboard/') })
     }
 
     if (page === 'forget-password') {
+      try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) renderChrome(true) } catch { /* stay unauthenticated */ }
       $('forgot-email').value = S.getItem('kluzar_email') || ''
       $('form-forgot').addEventListener('submit', async (e) => {
         e.preventDefault()
@@ -315,6 +336,7 @@
     }
 
     if (page === 'forget-password-reset') {
+      try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) renderChrome(true) } catch { /* stay unauthenticated */ }
       const recoveryToken = S.getItem('kluzar_recovery_token')
       if (!recoveryToken) { go('/forget-password/'); return }
       $('form-reset').addEventListener('submit', async (e) => {
@@ -344,7 +366,7 @@
         try {
           await api('/account/profile', { method: 'PATCH', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ firstName: $('profile-first').value, lastName: $('profile-last').value, phone: $('profile-phone').value }) })
           go('/dashboard/')
-        } catch (err) { showError(err.message) }
+        } catch (err) { handleProtectedError(err) }
       })
     }
 
@@ -358,7 +380,7 @@
         try {
           await api('/auth/password/change', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('change-current').value, mfaCode: $('change-mfa').value.trim(), newPassword: $('change-new').value }) })
           go('/dashboard/')
-        } catch (err) { showError(err.message) }
+        } catch (err) { handleProtectedError(err) }
       })
     }
 
@@ -377,7 +399,7 @@
         try {
           await api('/auth/mfa/disable', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('disable-current').value, mfaCode: $('disable-mfa').value.trim() }) })
           go('/dashboard/')
-        } catch (err) { showError(err.message) }
+        } catch (err) { handleProtectedError(err) }
       })
     }
 
@@ -399,13 +421,13 @@
             const btn = document.createElement('button')
             btn.type = 'button'; btn.className = 'btn-secondary'; btn.textContent = 'Revoke'
             btn.addEventListener('click', async () => {
-              try { await api('/account/sessions/revoke', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ sessionId: s.id }) }); li.remove() } catch (err) { showError(err.message) }
+              try { await api('/account/sessions/revoke', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ sessionId: s.id }) }); li.remove() } catch (err) { handleProtectedError(err) }
             })
             li.appendChild(btn)
           }
           list.appendChild(li)
         })
-      } catch (err) { showError(err.message) }
+      } catch (err) { handleProtectedError(err) }
     }
 
     if (page === 'recovery-regenerate') {
@@ -421,11 +443,12 @@
           $('regen-download').classList.remove('hidden')
           $('regen-download').onclick = () => downloadCodes(data.recoveryCodes || [], 'kluzar-recovery-codes-new.txt')
           showInfo('New recovery codes generated. Old codes no longer work.')
-        } catch (err) { showError(err.message) }
+        } catch (err) { handleProtectedError(err) }
       })
     }
 
     if (page === 'expired') {
+      if (await redirectIfAuthed()) return
       renderChrome(false)
       $('expired-login').addEventListener('click', () => go('/login/'))
     }

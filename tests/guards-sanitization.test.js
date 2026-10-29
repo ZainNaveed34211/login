@@ -34,7 +34,7 @@ test('guards: step order - password page needs a valid email, MFA needs a challe
   assert.ok(shared.includes("if (!isEmailFormat(email))"), 'password page must validate the stored email format, not just its presence')
   assert.ok(shared.includes("if (!challengeToken) { go('/login/'); return }"), 'MFA verify must require a challenge token')
   assert.ok(shared.includes("if (!recoveryToken) { go('/forget-password/'); return }"), 'reset page must require a recovery token')
-  assert.ok(shared.includes("if (!codes.length) { go('/login/'); return }"), 'recovery codes page must require codes in storage')
+  assert.ok(shared.includes("if (!codes.length) {"), 'recovery codes page must require codes in storage (then decide dashboard vs login by session, see session-on-every-page test)')
   assert.ok(!shared.includes("'mfa-manage'"), 'old mfa-manage page name must not remain in the chrome list')
   assert.ok(shared.includes("'authenticator'"), 'authenticator page must be in the protected list')
 })
@@ -87,4 +87,28 @@ test('sanitization: backend token tables are allowlisted, never built from user 
   for (const name of ['setup_tokens', 'login_challenges', 'recovery_transactions']) {
     assert.ok(handlers.includes(`'${name}'`), `hardcoded table ${name} must exist`)
   }
+})
+
+test('session on every page: already-logged-in users are sent to dashboard from login/signup/password/code/expired, never left on a step page', () => {
+  assert.ok(shared.includes('async function redirectIfAuthed()'), 'redirectIfAuthed helper must exist')
+  for (const page of ["page === 'login-password'", "page === 'signup'", "page === 'mfa-verify'", "page === 'expired'"]) {
+    const idx = shared.indexOf(page)
+    assert.ok(idx >= 0, `${page} handler must exist`)
+    const block = shared.slice(idx, idx + 400)
+    assert.ok(block.includes('redirectIfAuthed'), `${page} must check session and redirect to dashboard if already logged in`)
+  }
+  assert.ok(shared.includes("page === 'login-email'"), 'login-email must keep its existing dashboard redirect')
+})
+
+test('session on every page: protected forms redirect to login on 401, not just show an error', () => {
+  assert.ok(shared.includes('function handleProtectedError'), 'handleProtectedError helper must exist')
+  const count = (shared.match(/handleProtectedError\(err\)/g) || []).length
+  assert.ok(count >= 6, `handleProtectedError must be used in protected handlers, found ${count}`)
+})
+
+test('session on every page: recovery-codes without codes goes to dashboard if logged in, else login', () => {
+  const idx = shared.indexOf("page === 'recovery-codes'")
+  const block = shared.slice(idx, idx + 600)
+  assert.ok(block.includes("go('/dashboard/')"), 'recovery-codes without codes must go to dashboard when logged in')
+  assert.ok(block.includes("go('/login/')"), 'recovery-codes without codes must go to login when logged out')
 })
