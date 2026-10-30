@@ -41,7 +41,44 @@
   // the dashboard before the subscription section could render.
   const setText = (id, value) => { const el = $(id); if (el) el.textContent = value }
   const setHidden = (id, hidden) => { const el = $(id); if (el) el.classList.toggle('hidden', hidden) }
-  const go = (page) => { window.location.href = page }
+  // Return-to-origin support (for Kluzar subdomains such as SEO):
+  // a ?next= value is honoured ONLY at the post-login landing step, and
+  // ONLY when it is https://kluzar.com or https://*.kluzar.com — never
+  // accounts.kluzar.com itself (that would loop), never another host,
+  // never http, never a URL with credentials. Anything else falls back
+  // to /dashboard/. This is not an open redirect: the allowlist above
+  // is the whole rule, and no other destination can pass it.
+  function validReturnTarget() {
+    try {
+      const raw = new URLSearchParams(window.location.search).get('next')
+      if (!raw || raw.length > 2048) return null
+      const u = new URL(raw)
+      if (u.protocol !== 'https:' || u.username || u.password) return null
+      const h = u.hostname.toLowerCase()
+      if (h === 'kluzar.com' || (h.endsWith('.kluzar.com') && h !== 'accounts.kluzar.com')) return u.toString()
+      return null
+    } catch { return null }
+  }
+  const go = (page) => {
+    // Post-login landing: return to the Kluzar subdomain the user came
+    // from, when one was requested and passed validation above.
+    if (page === '/dashboard/') {
+      const target = validReturnTarget()
+      if (target) { window.location.href = target; return }
+    }
+    // Preserve a requested return target across internal auth steps
+    // (email -> password -> code / MFA setup), so it is still present
+    // at the landing step. Plain links (<a href>) are untouched.
+    if (typeof page === 'string' && page.startsWith('/') && !page.includes('next=')) {
+      const target = validReturnTarget()
+      if (target) {
+        const sep = page.includes('?') ? '&' : '?'
+        window.location.href = page + sep + 'next=' + encodeURIComponent(target)
+        return
+      }
+    }
+    window.location.href = page
+  }
   function showError(msg) {
     const el = $('global-error')
     if (!el) { alert(msg); return }
