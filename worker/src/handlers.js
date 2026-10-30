@@ -112,6 +112,8 @@ async function requireSession(request, env) {
 const MANAGE_ORIGIN = 'https://manage.kluzar.com'
 const ASSERTION_TTL_SECONDS = 300
 const ASSERTION_KID = 'manage-assertion-v1'
+const BUSINESS_ORIGIN = 'https://business.kluzar.com'
+const BUSINESS_ASSERTION_KID = 'business-assertion-v1'
 
 function b64urlEncode(bytes) {
   let s = ''
@@ -150,6 +152,35 @@ async function signManageAssertion(env, { userId, sessionId }) {
     sub: userId,
     sid: sessionId,
     aud: 'kluzar-manage-api',
+    iat: nowSec,
+    exp: nowSec + ASSERTION_TTL_SECONDS,
+    jti: randomJti(),
+  }
+  const enc = new TextEncoder()
+  const signingInput = `${b64urlEncode(enc.encode(JSON.stringify(header)))}.${b64urlEncode(enc.encode(JSON.stringify(payload)))}`
+  const signature = await crypto.subtle.sign({ name: 'Ed25519' }, key, enc.encode(signingInput))
+  return `${signingInput}.${b64urlEncode(new Uint8Array(signature))}`
+}
+
+async function signBusinessAssertion(env, { userId, sessionId }) {
+  const raw = env.BUSINESS_ASSERTION_PRIVATE_KEY
+  if (!raw) throw new Error('Signing key not configured.')
+  let jwk
+  try {
+    jwk = JSON.parse(raw)
+  } catch {
+    throw new Error('Signing key malformed.')
+  }
+  if (!jwk || jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.d !== 'string') {
+    throw new Error('Signing key malformed.')
+  }
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'Ed25519' }, false, ['sign'])
+  const nowSec = Math.floor(Date.now() / 1000)
+  const header = { alg: 'EdDSA', typ: 'JWT', kid: BUSINESS_ASSERTION_KID }
+  const payload = {
+    sub: userId,
+    sid: sessionId,
+    aud: 'kluzar-business-api',
     iat: nowSec,
     exp: nowSec + ASSERTION_TTL_SECONDS,
     jti: randomJti(),
@@ -589,6 +620,25 @@ export async function handleRequest(request, env) {
       return jsonResponse(env, request, 200, { ok: true, assertion, expiresIn: ASSERTION_TTL_SECONDS })
     }
     if (method !== 'POST' && path === '/auth/manage-assertion') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/business-assertion') {
+      const session = await getSession(request, env)
+      if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== BUSINESS_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      if (!(await checkRateD1(env.DB, request, 'businessAssertion'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      let assertion
+      try {
+        assertion = await signBusinessAssertion(env, { userId: session.user.id, sessionId: session.id })
+      } catch {
+        return errorResponse(env, request, 500, 'Assertion service is not configured.', 'ASSERTION_UNAVAILABLE')
+      }
+      await audit(env.DB, session.user.id, 'business_assertion_issued', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, assertion, expiresIn: ASSERTION_TTL_SECONDS })
+    }
+    if (method !== 'POST' && path === '/auth/business-assertion') {
       return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
     }
     if (method === 'POST' && path === '/auth/logout') {
