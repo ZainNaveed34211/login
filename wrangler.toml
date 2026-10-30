@@ -23,7 +23,7 @@ database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
 # was deleted by the next deploy. These are public frontend origins
 # (visible in CORS headers anyway), not secrets, so declaring them
 # here is safe and is the only way they survive deploys.
-ALLOWED_ORIGINS = "https://kluzar.com,https://seo.kluzar.com,https://accounts.kluzar.com,https://payments.kluzar.com,https://manage.kluzar.com,https://business.kluzar.com,https://dashboard.kluzar.com,https://admin.kluzar.com"
+ALLOWED_ORIGINS = "https://kluzar.com,https://seo.kluzar.com,https://accounts.kluzar.com,https://payments.kluzar.com,https://manage.kluzar.com,https://business.kluzar.com,https://dash.kluzar.com,https://admin.kluzar.com"
 ALLOW_LOCALHOST = "false"
 ALLOW_INSECURE_COOKIE = "false"
 PBKDF2_ITERATIONS = "100000"
