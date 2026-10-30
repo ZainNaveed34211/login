@@ -116,6 +116,7 @@ export const RATE_LIMITS = {
   login: { limit: 10, windowMs: 15 * 60 * 1000 },
   manageAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
   businessAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
+  dashAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
   mfaVerify: { limit: 10, windowMs: 10 * 60 * 1000 },
   forgot: { limit: 5, windowMs: 15 * 60 * 1000 },
   reset: { limit: 5, windowMs: 15 * 60 * 1000 },
