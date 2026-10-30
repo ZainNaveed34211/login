@@ -79,6 +79,13 @@
     }
     window.location.href = page
   }
+  // Direct dashboard landing for already-logged-in users: unlike go(),
+  // this NEVER honours ?next=. The SEO account button links everyone to
+  // /login/?next=<seo>, and the accounts app itself decides from the
+  // server-verified session: logged-out users log in and then return
+  // (post-login go() honours next), while users who already have a
+  // session go straight to their dashboard through this helper.
+  const goDashboard = () => { window.location.href = '/dashboard/' }
   function showError(msg) {
     const el = $('global-error')
     if (!el) { alert(msg); return }
@@ -153,7 +160,7 @@
       // server-side before showing any data. Editing `authenticated`
       // in DevTools or a proxy can at most show an empty shell locally —
       // it can never make the server return another account's data.
-      if (s.ok && s.authenticated) { go('/dashboard/'); return true }
+      if (s.ok && s.authenticated) { goDashboard(); return true }
     } catch { /* not logged in - continue with the page's own guard */ }
     return false
   }
@@ -267,7 +274,7 @@
       $('go-signup').addEventListener('click', () => go('/signup/'))
       $('go-forgot-1').addEventListener('click', () => go('/forget-password/'))
       // If already logged in, go straight to dashboard.
-      try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) go('/dashboard/') } catch { /* stay */ }
+      try { const s = await api('/auth/session', { method: 'GET' }); if (s.authenticated) goDashboard() } catch { /* stay */ }
     }
 
     if (page === 'login-password') {
@@ -365,7 +372,7 @@
             // as logout()).
             const s = await api('/auth/session', { method: 'GET' })
             await api('/auth/mfa/verify', { method: 'POST', headers: { 'X-CSRF-Token': s.csrfToken }, body: JSON.stringify({ code: $('mfa-setup-code').value.trim() }) })
-            go('/dashboard/')
+            goDashboard()
             return
           }
           const data = await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ setupToken: S.getItem('kluzar_setup_token'), code: $('mfa-setup-code').value.trim() }) })
