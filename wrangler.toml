@@ -16,11 +16,14 @@ database_name = "kluzar-accounts"
 database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
 
 [vars]
-# ALLOWED_ORIGINS is deliberately NOT declared here. It is managed in
-# the Cloudflare dashboard ONLY: wrangler deploy overwrites dashboard
-# values for any var declared in wrangler.toml, so declaring it here
-# would wipe the dashboard list (which includes every Kluzar frontend
-# origin, not just accounts) on every deploy.
+# ALLOWED_ORIGINS MUST be declared here with the full list. Lesson
+# learned 2026-10-30: wrangler deploy syncs plain Variables to this
+# file and REMOVES dashboard-only plain Variables (secrets are a
+# separate namespace and do survive). A dashboard-only ALLOWED_ORIGINS
+# was deleted by the next deploy. These are public frontend origins
+# (visible in CORS headers anyway), not secrets, so declaring them
+# here is safe and is the only way they survive deploys.
+ALLOWED_ORIGINS = "https://kluzar.com,https://seo.kluzar.com,https://accounts.kluzar.com,https://payments.kluzar.com,https://manage.kluzar.com"
 ALLOW_LOCALHOST = "false"
 ALLOW_INSECURE_COOKIE = "false"
 PBKDF2_ITERATIONS = "100000"
