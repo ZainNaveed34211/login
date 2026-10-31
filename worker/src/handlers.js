@@ -116,6 +116,8 @@ const BUSINESS_ORIGIN = 'https://business.kluzar.com'
 const BUSINESS_ASSERTION_KID = 'business-assertion-v1'
 const DASH_ORIGIN = 'https://dash.kluzar.com'
 const DASH_ASSERTION_KID = 'dash-assertion-v1'
+const ADMIN_ORIGIN = 'https://admin.kluzar.com'
+const ADMIN_ASSERTION_KID = 'admin-assertion-v1'
 
 function b64urlEncode(bytes) {
   let s = ''
@@ -215,6 +217,36 @@ async function signDashAssertion(env, { userId, sessionId }) {
     iat: nowSec,
     exp: nowSec + ASSERTION_TTL_SECONDS,
     jti: randomJti(),
+  }
+  const enc = new TextEncoder()
+  const signingInput = `${b64urlEncode(enc.encode(JSON.stringify(header)))}.${b64urlEncode(enc.encode(JSON.stringify(payload)))}`
+  const signature = await crypto.subtle.sign({ name: 'Ed25519' }, key, enc.encode(signingInput))
+  return `${signingInput}.${b64urlEncode(new Uint8Array(signature))}`
+}
+
+async function signAdminAssertion(env, { userId, sessionId, mfaEnabled }) {
+  const raw = env.ADMIN_ASSERTION_PRIVATE_KEY
+  if (!raw) throw new Error('Signing key not configured.')
+  let jwk
+  try {
+    jwk = JSON.parse(raw)
+  } catch {
+    throw new Error('Signing key malformed.')
+  }
+  if (!jwk || jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.d !== 'string') {
+    throw new Error('Signing key malformed.')
+  }
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'Ed25519' }, false, ['sign'])
+  const nowSec = Math.floor(Date.now() / 1000)
+  const header = { alg: 'EdDSA', typ: 'JWT', kid: ADMIN_ASSERTION_KID }
+  const payload = {
+    sub: userId,
+    sid: sessionId,
+    aud: 'kluzar-admin-api',
+    iat: nowSec,
+    exp: nowSec + ASSERTION_TTL_SECONDS,
+    jti: randomJti(),
+    mfa: mfaEnabled === true,
   }
   const enc = new TextEncoder()
   const signingInput = `${b64urlEncode(enc.encode(JSON.stringify(header)))}.${b64urlEncode(enc.encode(JSON.stringify(payload)))}`
@@ -689,6 +721,25 @@ export async function handleRequest(request, env) {
       return jsonResponse(env, request, 200, { ok: true, assertion, expiresIn: ASSERTION_TTL_SECONDS })
     }
     if (method !== 'POST' && path === '/auth/dash-assertion') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/admin-assertion') {
+      const session = await getSession(request, env)
+      if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      if (!(await checkRateD1(env.DB, request, 'adminAssertion'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      let assertion
+      try {
+        assertion = await signAdminAssertion(env, { userId: session.user.id, sessionId: session.id, mfaEnabled: session.user.mfa_enabled === 1 })
+      } catch {
+        return errorResponse(env, request, 500, 'Assertion service is not configured.', 'ASSERTION_UNAVAILABLE')
+      }
+      await audit(env.DB, session.user.id, 'admin_assertion_issued', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, assertion, expiresIn: ASSERTION_TTL_SECONDS })
+    }
+    if (method !== 'POST' && path === '/auth/admin-assertion') {
       return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
     }
     if (method === 'POST' && path === '/auth/logout') {
