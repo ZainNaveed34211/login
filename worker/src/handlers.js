@@ -254,7 +254,7 @@ async function signAdminAssertion(env, { userId, sessionId, mfaEnabled }) {
   return `${signingInput}.${b64urlEncode(new Uint8Array(signature))}`
 }
 
-const ONE_TIME_TABLES = new Set(['setup_tokens', 'login_challenges', 'recovery_transactions'])
+const ONE_TIME_TABLES = new Set(['setup_tokens', 'login_challenges', 'recovery_transactions', 'admin_challenges'])
 function checkOneTimeTable(table) {
   // Table names can never come from user input. Callers pass only the
   // three hardcoded names above; anything else is a programming error
