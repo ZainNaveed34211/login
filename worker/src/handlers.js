@@ -116,6 +116,8 @@ const BUSINESS_ORIGIN = 'https://business.kluzar.com'
 const BUSINESS_ASSERTION_KID = 'business-assertion-v1'
 const DASH_ORIGIN = 'https://dash.kluzar.com'
 const DASH_ASSERTION_KID = 'dash-assertion-v1'
+const ADMIN_ORIGIN = 'https://admin.kluzar.com'
+const ADMIN_ASSERTION_KID = 'admin-assertion-v1'
 
 function b64urlEncode(bytes) {
   let s = ''
@@ -215,6 +217,36 @@ async function signDashAssertion(env, { userId, sessionId }) {
     iat: nowSec,
     exp: nowSec + ASSERTION_TTL_SECONDS,
     jti: randomJti(),
+  }
+  const enc = new TextEncoder()
+  const signingInput = `${b64urlEncode(enc.encode(JSON.stringify(header)))}.${b64urlEncode(enc.encode(JSON.stringify(payload)))}`
+  const signature = await crypto.subtle.sign({ name: 'Ed25519' }, key, enc.encode(signingInput))
+  return `${signingInput}.${b64urlEncode(new Uint8Array(signature))}`
+}
+
+async function signAdminAssertion(env, { userId, sessionId, mfaEnabled }) {
+  const raw = env.ADMIN_ASSERTION_PRIVATE_KEY
+  if (!raw) throw new Error('Signing key not configured.')
+  let jwk
+  try {
+    jwk = JSON.parse(raw)
+  } catch {
+    throw new Error('Signing key malformed.')
+  }
+  if (!jwk || jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.d !== 'string') {
+    throw new Error('Signing key malformed.')
+  }
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'Ed25519' }, false, ['sign'])
+  const nowSec = Math.floor(Date.now() / 1000)
+  const header = { alg: 'EdDSA', typ: 'JWT', kid: ADMIN_ASSERTION_KID }
+  const payload = {
+    sub: userId,
+    sid: sessionId,
+    aud: 'kluzar-admin-api',
+    iat: nowSec,
+    exp: nowSec + ASSERTION_TTL_SECONDS,
+    jti: randomJti(),
+    mfa: mfaEnabled === true,
   }
   const enc = new TextEncoder()
   const signingInput = `${b64urlEncode(enc.encode(JSON.stringify(header)))}.${b64urlEncode(enc.encode(JSON.stringify(payload)))}`
@@ -332,6 +364,41 @@ async function verifyMfaCode(db, env, user, code) {
   }
   const ok = await verifyRecoveryCode(db, user.id, code)
   return { ok, via: ok ? 'recovery' : null }
+}
+
+async function claimAdminTotpStep(db, userId, step) {
+  const res = await db
+    .prepare('UPDATE admin_mfa_secrets SET last_used_step = ? WHERE user_id = ? AND (last_used_step IS NULL OR last_used_step < ?)')
+    .bind(step, userId, step)
+    .run()
+  return changesOf(res) === 1
+}
+async function verifyAdminRecoveryCode(db, userId, code) {
+  const normalized = normalizeRecoveryCode(code)
+  if (!/^[A-Z0-9]{16}$/.test(normalized)) return false
+  const hash = await sha256Hex(normalized)
+  const res = await db
+    .prepare('UPDATE admin_recovery_codes SET used = 1, used_at = ? WHERE user_id = ? AND code_hash = ? AND used = 0')
+    .bind(nowIso(), userId, hash)
+    .run()
+  return changesOf(res) === 1
+}
+async function verifyAdminMfaCode(db, env, userId, code) {
+  if (isCodeFormat(code)) {
+    const secretRow = await db.prepare('SELECT * FROM admin_mfa_secrets WHERE user_id = ? AND enabled = 1').bind(userId).first()
+    if (!secretRow) return { ok: false, via: null }
+    const secret = await decryptSecret(env, secretRow.encrypted_secret)
+    const res = await verifyTotp(secret, code, secretRow.last_used_step)
+    if (!res.ok) return { ok: false, via: null }
+    if (!(await claimAdminTotpStep(db, userId, res.step))) return { ok: false, via: null }
+    return { ok: true, via: 'totp' }
+  }
+  const ok = await verifyAdminRecoveryCode(db, userId, code)
+  return { ok, via: ok ? 'recovery' : null }
+}
+async function adminSecretExists(db, userId) {
+  const row = await db.prepare('SELECT user_id FROM admin_mfa_secrets WHERE user_id = ? AND enabled = 1').bind(userId).first()
+  return !!row
 }
 
 export async function handleRequest(request, env) {
@@ -629,6 +696,7 @@ export async function handleRequest(request, env) {
     if (method === 'GET' && path === '/auth/session') {
       const session = await getSession(request, env)
       if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (session.scope === 'admin') return jsonResponse(env, request, 401, { ok: false, authenticated: false })
       const entitlement = await getEntitlement(env.DB, session.user.id)
       return jsonResponse(env, request, 200, { ok: true, authenticated: true, user: publicUser(session.user), csrfToken: session.csrf_token, entitlement })
     }
@@ -637,6 +705,7 @@ export async function handleRequest(request, env) {
     if (method === 'POST' && path === '/auth/manage-assertion') {
       const session = await getSession(request, env)
       if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (session.scope === 'admin') return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const origin = request.headers.get('Origin') || ''
       if (origin !== MANAGE_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
@@ -656,6 +725,7 @@ export async function handleRequest(request, env) {
     if (method === 'POST' && path === '/auth/business-assertion') {
       const session = await getSession(request, env)
       if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (session.scope === 'admin') return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const origin = request.headers.get('Origin') || ''
       if (origin !== BUSINESS_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
@@ -675,6 +745,7 @@ export async function handleRequest(request, env) {
     if (method === 'POST' && path === '/auth/dash-assertion') {
       const session = await getSession(request, env)
       if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (session.scope === 'admin') return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
       const origin = request.headers.get('Origin') || ''
       if (origin !== DASH_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
@@ -689,6 +760,177 @@ export async function handleRequest(request, env) {
       return jsonResponse(env, request, 200, { ok: true, assertion, expiresIn: ASSERTION_TTL_SECONDS })
     }
     if (method !== 'POST' && path === '/auth/dash-assertion') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/admin-mfa/challenge') {
+      if (!(await checkRateD1(env.DB, request, 'adminMfaChallenge'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      if (typeof body.email !== 'string') {
+        return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
+      }
+      const email = normalizeEmail(body.email)
+      const password = body.password
+      if (!isValidEmail(email) || typeof password !== 'string') {
+        return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
+      }
+      if (!(await checkRateD1Account(env.DB, 'adminMfaChallenge', await sha256Hex(email)))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const user = await getUserByEmail(env.DB, email)
+      let passwordOk
+      if (user) {
+        passwordOk = await verifyPassword(password, user.password_hash)
+      } else {
+        const dummyHash = await hashPassword('dummy-password-for-timing', iterations(env))
+        passwordOk = await verifyPassword(password, dummyHash)
+      }
+      if (!user || !passwordOk) {
+        await audit(env.DB, user ? user.id : '', 'admin_login', ipH, false, '')
+        return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
+      }
+      const challengeToken = await createOneTimeToken(env.DB, 'admin_challenges', user.id, 10)
+      const setup = await adminSecretExists(env.DB, user.id)
+      await audit(env.DB, user.id, 'admin_challenge', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, challengeToken, adminMfaSetup: setup })
+    }
+    if (method !== 'POST' && path === '/auth/admin-mfa/challenge') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/admin-mfa/setup') {
+      if (!(await checkRateD1(env.DB, request, 'adminMfaSetup'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      if (typeof body.challengeToken !== 'string') {
+        return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      }
+      const challengeRow = await peekOneTimeToken(env.DB, 'admin_challenges', body.challengeToken)
+      if (!challengeRow) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      if (!(await checkRateD1Account(env.DB, 'adminMfaSetup', challengeRow.user_id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const user = await getUserById(env.DB, challengeRow.user_id)
+      if (!user) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      const exists = await adminSecretExists(env.DB, user.id)
+      if (exists) {
+        if (typeof body.code !== 'string') {
+          return errorResponse(env, request, 400, 'Admin MFA is already set up. Enter a code from your existing app to replace it.', 'ALREADY_SETUP')
+        }
+        const secretRow = await env.DB.prepare('SELECT * FROM admin_mfa_secrets WHERE user_id = ? AND enabled = 1').bind(user.id).first()
+        if (!secretRow) return errorResponse(env, request, 400, 'Admin MFA is already set up. Enter a code from your existing app to replace it.', 'ALREADY_SETUP')
+        const secret = await decryptSecret(env, secretRow.encrypted_secret)
+        const check = await verifyTotp(secret, body.code, secretRow.last_used_step)
+        if (!check.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      }
+      const secretBytes = randomBytes(20)
+      const manualKey = base32Encode(secretBytes).replace(/=+$/, '')
+      const encrypted = await encryptSecret(env, secretBytes)
+      await env.DB.prepare('DELETE FROM pending_admin_mfa_secrets WHERE user_id = ?').bind(user.id).run()
+      await env.DB.prepare('INSERT INTO pending_admin_mfa_secrets (user_id, encrypted_secret, created_at, expires_at) VALUES (?, ?, ?, ?)')
+        .bind(user.id, encrypted, nowIso(), isoPlus(30 * 60 * 1000))
+        .run()
+      const otpauthUrl = `otpauth://totp/${encodeURIComponent('Kluzar Admin:' + user.email)}?secret=${manualKey}&issuer=${encodeURIComponent('Kluzar Admin')}&algorithm=SHA1&digits=6&period=30`
+      return jsonResponse(env, request, 200, { ok: true, otpauthUrl, manualKey })
+    }
+    if (method !== 'POST' && path === '/auth/admin-mfa/setup') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/admin-mfa/verify-setup') {
+      if (!(await checkRateD1(env.DB, request, 'adminMfaVerify'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const code = body.code
+      if (typeof body.challengeToken !== 'string') {
+        return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      }
+      const challengeRow = await peekOneTimeToken(env.DB, 'admin_challenges', body.challengeToken)
+      if (!challengeRow) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      if (!(await checkRateD1Account(env.DB, 'adminMfaVerify', challengeRow.user_id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const pending = await env.DB.prepare('SELECT * FROM pending_admin_mfa_secrets WHERE user_id = ?').bind(challengeRow.user_id).first()
+      if (!pending || new Date(pending.expires_at).getTime() <= Date.now() || !isCodeFormat(code)) {
+        return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      }
+      const secret = await decryptSecret(env, pending.encrypted_secret)
+      const res = await verifyTotp(secret, code, null)
+      if (!res.ok) return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      if (!(await consumeOneTimeToken(env.DB, 'admin_challenges', body.challengeToken, challengeRow))) {
+        return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      }
+      const codes = generateRecoveryCodes(10)
+      const codeStmts = []
+      for (const c of codes) {
+        const h = await sha256Hex(normalizeRecoveryCode(c))
+        codeStmts.push(env.DB.prepare('INSERT INTO admin_recovery_codes (id, user_id, code_hash, used, created_at) VALUES (?, ?, ?, ?, ?)').bind(randomToken(16), challengeRow.user_id, h, 0, nowIso()))
+      }
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM admin_mfa_secrets WHERE user_id = ?').bind(challengeRow.user_id),
+        env.DB.prepare('INSERT INTO admin_mfa_secrets (user_id, encrypted_secret, enabled, last_used_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(challengeRow.user_id, pending.encrypted_secret, 1, res.step, nowIso(), nowIso()),
+        env.DB.prepare('DELETE FROM pending_admin_mfa_secrets WHERE user_id = ?').bind(challengeRow.user_id),
+        env.DB.prepare('DELETE FROM admin_recovery_codes WHERE user_id = ?').bind(challengeRow.user_id),
+        ...codeStmts,
+      ])
+      await audit(env.DB, challengeRow.user_id, 'admin_mfa_setup', ipH, true, '')
+      const session = await createSession(env.DB, challengeRow.user_id, userAgent, ipH, 'admin')
+      return jsonResponse(env, request, 200, { ok: true, activated: true, recoveryCodes: codes, csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
+    }
+    if (method !== 'POST' && path === '/auth/admin-mfa/verify-setup') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/admin-mfa/verify') {
+      if (!(await checkRateD1(env.DB, request, 'adminMfaVerify'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const code = body.code
+      if (typeof body.challengeToken !== 'string') {
+        return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+      }
+      const challengeRow = await peekOneTimeToken(env.DB, 'admin_challenges', body.challengeToken)
+      if (!challengeRow) return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+      if (!(await checkRateD1Account(env.DB, 'adminMfaVerify', challengeRow.user_id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const secretRow = await env.DB.prepare('SELECT user_id FROM admin_mfa_secrets WHERE user_id = ? AND enabled = 1').bind(challengeRow.user_id).first()
+      if (!secretRow) return errorResponse(env, request, 400, 'Admin MFA is not set up yet.', 'NOT_SETUP')
+      const res = await verifyAdminMfaCode(env.DB, env, challengeRow.user_id, code)
+      if (!res.ok) {
+        await audit(env.DB, challengeRow.user_id, 'admin_login', ipH, false, '')
+        return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')
+      }
+      if (!(await consumeOneTimeToken(env.DB, 'admin_challenges', body.challengeToken, challengeRow))) {
+        return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+      }
+      const session = await createSession(env.DB, challengeRow.user_id, userAgent, ipH, 'admin')
+      await audit(env.DB, challengeRow.user_id, 'admin_login', ipH, true, res.via)
+      return jsonResponse(env, request, 200, { ok: true, csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
+    }
+    if (method !== 'POST' && path === '/auth/admin-mfa/verify') {
+      return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
+    }
+    if (method === 'POST' && path === '/auth/admin-assertion') {
+      const session = await getSession(request, env)
+      if (!session) return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      if (session.scope !== 'admin') return errorResponse(env, request, 403, 'Admin session required.', 'FORBIDDEN')
+      if (!csrfOk(env, request, session)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      if (!(await checkRateD1(env.DB, request, 'adminAssertion'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      let assertion
+      try {
+        assertion = await signAdminAssertion(env, { userId: session.user.id, sessionId: session.id, mfaEnabled: true })
+      } catch {
+        return errorResponse(env, request, 500, 'Assertion service is not configured.', 'ASSERTION_UNAVAILABLE')
+      }
+      await audit(env.DB, session.user.id, 'admin_assertion_issued', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, assertion, expiresIn: ASSERTION_TTL_SECONDS })
+    }
+    if (method !== 'POST' && path === '/auth/admin-assertion') {
       return errorResponse(env, request, 405, 'Method not allowed.', 'METHOD_NOT_ALLOWED')
     }
     if (method === 'POST' && path === '/auth/logout') {
