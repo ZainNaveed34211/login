@@ -19,7 +19,7 @@ export async function getUserById(db, id) {
 export async function getSessionByHash(db, tokenHash) {
   return db.prepare('SELECT * FROM sessions WHERE token_hash = ?').bind(tokenHash).first()
 }
-export async function createSession(db, userId, userAgent, ipHashValue) {
+export async function createSession(db, userId, userAgent, ipHashValue, scope = 'full') {
   const token = randomToken(32)
   const tokenHash = await sha256Hex(token)
   const csrfToken = randomToken(24)
@@ -31,9 +31,9 @@ export async function createSession(db, userId, userAgent, ipHashValue) {
   const safeAgent = String(userAgent || '').slice(0, 500)
   await db
     .prepare(
-      'INSERT INTO sessions (id, user_id, token_hash, csrf_token, user_agent, ip_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO sessions (id, user_id, token_hash, csrf_token, user_agent, ip_hash, created_at, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .bind(id, userId, tokenHash, csrfToken, safeAgent, ipHashValue || '', nowIso(), expiresAt)
+    .bind(id, userId, tokenHash, csrfToken, safeAgent, ipHashValue || '', nowIso(), expiresAt, scope)
     .run()
   return { id, token, csrfToken, expiresAt }
 }
