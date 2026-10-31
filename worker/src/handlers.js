@@ -517,6 +517,9 @@ export async function handleRequest(request, env) {
         await audit(env.DB, user ? user.id : '', 'login_failed', ipH, false, '')
         return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
       }
+      if (user.status === 'suspended') {
+        return errorResponse(env, request, 401, 'Invalid email or password.', 'INVALID_CREDENTIALS')
+      }
       if (user.status === 'pending_mfa') {
         const setupToken = await createOneTimeToken(env.DB, 'setup_tokens', user.id, 30)
         return jsonResponse(env, request, 200, { ok: true, setupRequired: true, setupToken })
