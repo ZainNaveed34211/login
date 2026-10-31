@@ -701,6 +701,14 @@ export async function handleRequest(request, env) {
       return jsonResponse(env, request, 200, { ok: true, authenticated: true, user: publicUser(session.user), csrfToken: session.csrf_token, entitlement })
     }
 
+    if (method === 'GET' && path === '/auth/admin-session') {
+      const origin = request.headers.get('Origin') || ''
+      if (origin !== ADMIN_ORIGIN) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const session = await getSession(request, env)
+      if (!session || session.scope !== 'admin') return jsonResponse(env, request, 401, { ok: false, authenticated: false })
+      return jsonResponse(env, request, 200, { ok: true, authenticated: true, user: publicUser(session.user), csrfToken: session.csrf_token })
+    }
+
     // ---- Manage assertion (new, approval-gated) ----
     if (method === 'POST' && path === '/auth/manage-assertion') {
       const session = await getSession(request, env)
