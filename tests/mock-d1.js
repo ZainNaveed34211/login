@@ -9,6 +9,8 @@ const UNIQUE = {
   login_challenges: ['token_hash'],
   recovery_codes: ['code_hash'],
   recovery_transactions: ['token_hash'],
+  admin_challenges: ['token_hash'],
+  admin_recovery_codes: ['code_hash'],
 }
 export class MockD1 {
   constructor() {
@@ -16,7 +18,9 @@ export class MockD1 {
       users: [], sessions: [], mfa_secrets: [], pending_mfa_secrets: [],
       setup_tokens: [], login_challenges: [], recovery_codes: [],
       recovery_transactions: [], entitlements: [], audit_events: [],
-      rate_limits: [],
+      rate_limits: [], admin_challenges: [], admin_mfa_secrets: [],
+      pending_admin_mfa_secrets: [], admin_recovery_codes: [],
+      admin_allowlist: [],
     }
   }
   snapshot() { return JSON.parse(JSON.stringify(this.tables)) }
@@ -130,9 +134,9 @@ export class MockD1 {
       if (sm) { row[sm[1]] = (row[sm[1]] || 0) + Number(sm[3]); continue }
       sm = part.match(/^(\w+)\s*=\s*excluded\.(\w+)$/i)
       if (sm) { row[sm[1]] = newRow ? newRow[sm[2]] : row[sm[1]]; continue }
-      sm = part.match(/^(\w+)\s*=\s*(\?|(\d+))$/)
+      sm = part.match(/^(\w+)\s*=\s*(\?|(\d+)|NULL)$/i)
       if (!sm) throw new Error('Unsupported SET: ' + part)
-      row[sm[1]] = sm[2] === '?' ? params[pi.value++] : Number(sm[3])
+      row[sm[1]] = sm[2] === '?' ? params[pi.value++] : (sm[2].toUpperCase() === 'NULL' ? null : Number(sm[3]))
     }
     return pi.value
   }
@@ -191,9 +195,9 @@ export class MockD1 {
       for (const part of setParts) {
         let sm = part.match(/^(\w+)\s*=\s*(\w+)\s*\+\s*(\d+)$/)
         if (sm) { increments[sm[1]] = Number(sm[3]); continue }
-        sm = part.match(/^(\w+)\s*=\s*(\?|(\d+))$/)
+        sm = part.match(/^(\w+)\s*=\s*(\?|(\d+)|NULL)$/i)
         if (!sm) throw new Error('Unsupported SET: ' + part)
-        updates[sm[1]] = sm[2] === '?' ? params[pi++] : Number(sm[3])
+        updates[sm[1]] = sm[2] === '?' ? params[pi++] : (sm[2].toUpperCase() === 'NULL' ? null : Number(sm[3]))
       }
       const filter = this._parseWhere(m[3], params.slice(pi))
       let count = 0
@@ -223,9 +227,12 @@ export class MockD1 {
 export function testEnv(db) {
   const freshKey = new Uint8Array(32)
   globalThis.crypto.getRandomValues(freshKey)
+  const freshIpSecret = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(freshIpSecret)
   return {
     DB: db,
     MFA_ENCRYPTION_KEY: Buffer.from(freshKey).toString('base64'),
+    IP_HASH_SECRET: Buffer.from(freshIpSecret).toString('base64'),
     ALLOWED_ORIGINS: 'http://localhost:3000',
     ALLOW_LOCALHOST: 'false',
     ALLOW_INSECURE_COOKIE: 'true',

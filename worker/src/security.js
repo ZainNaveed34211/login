@@ -5,7 +5,7 @@
 // limit rule in front of the Worker. The per-isolate limit still stops a
 // single client hammering one isolate, and D1 failure counters persist.
 // Do NOT claim this is a global rate limit.
-import { sha256Hex } from './crypto.js'
+import { COMMON_PASSWORDS } from './common-passwords.js'
 
 export const ALLOWED_ORIGIN_DEFAULT = 'https://accounts.kluzar.com'
 export function allowedOrigins(env) {
@@ -43,15 +43,19 @@ export function securityHeaders() {
   }
 }
 export function jsonResponse(env, request, status, body, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      ...securityHeaders(),
-      ...corsHeaders(env, request),
-      ...extraHeaders,
-    },
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    ...securityHeaders(),
+    ...corsHeaders(env, request),
   })
+  for (const [key, value] of Object.entries(extraHeaders)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item)
+    } else {
+      headers.set(key, value)
+    }
+  }
+  return new Response(JSON.stringify(body), { status, headers })
 }
 export function errorResponse(env, request, status, message, code = 'ERROR') {
   // Safe public errors only: no stack traces, no internals, no secrets.
@@ -69,8 +73,11 @@ export function clientIp(request) {
   )
   return String(ip).slice(0, 100)
 }
-export async function ipHash(ip) {
-  return (await sha256Hex(ip)).slice(0, 32)
+export async function ipHash(ip, secret) {
+  if (!secret) throw new Error('IP_HASH_SECRET is not configured')
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(ip))
+  return [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32)
 }
 // CSRF + Origin, fail-closed. The real frontend is a browser fetch from
 // https://accounts.kluzar.com to account-api.kluzar.com with credentials,
@@ -121,6 +128,7 @@ export const RATE_LIMITS = {
   adminMfaChallenge: { limit: 10, windowMs: 15 * 60 * 1000 },
   adminMfaSetup: { limit: 10, windowMs: 15 * 60 * 1000 },
   adminMfaVerify: { limit: 10, windowMs: 10 * 60 * 1000 },
+  adminStepup: { limit: 10, windowMs: 10 * 60 * 1000 },
   mfaVerify: { limit: 10, windowMs: 10 * 60 * 1000 },
   forgot: { limit: 5, windowMs: 15 * 60 * 1000 },
   reset: { limit: 5, windowMs: 15 * 60 * 1000 },
@@ -134,6 +142,28 @@ export function checkRate(env, request, name, extra = '') {
   const cfg = RATE_LIMITS[name] || RATE_LIMITS.sensitive
   const key = `${name}:${clientIp(request)}:${extra}`
   return rateLimit(key, cfg.limit, cfg.windowMs)
+}
+export const AUTH_SENSITIVE_LIMITERS = new Set([
+  'register',
+  'login',
+  'adminMfaChallenge',
+  'adminMfaSetup',
+  'adminMfaVerify',
+  'mfaVerify',
+  'mfaSetup',
+  'mfaDisable',
+  'forgot',
+  'reset',
+  'regenerate',
+  'passwordChange',
+  'adminStepup',
+])
+async function maybeCleanupRateLimits(db, nowMs) {
+  if (Math.random() >= 0.02) return
+  const cutoff = new Date(nowMs - 2 * 60 * 60 * 1000).toISOString()
+  try {
+    await db.prepare('DELETE FROM rate_limits WHERE updated_at < ?').bind(cutoff).run()
+  } catch {}
 }
 // Persistent (D1) rate limiting — the production enforcement point.
 // The in-memory Map above is per-isolate only and is kept ONLY as a
@@ -165,19 +195,19 @@ async function checkRateD1Key(db, key, cfg, nowMs, windowStart) {
     .first()
   return !!row && row.count <= cfg.limit
 }
-export async function checkRateD1(db, request, name, accountKey = '') {
+export async function checkRateD1(env, request, name, accountKey = '') {
   const cfg = RATE_LIMITS[name] || RATE_LIMITS.sensitive
   const nowMs = Date.now()
   const windowStart = Math.floor(nowMs / cfg.windowMs)
-  const ipH = await ipHash(clientIp(request))
+  const ipH = await ipHash(clientIp(request), env.IP_HASH_SECRET)
+  const db = env.DB
   try {
     if (!(await checkRateD1Key(db, `${name}:ip:${ipH}`, cfg, nowMs, windowStart))) return false
     if (accountKey && !(await checkRateD1Key(db, `${name}:acct:${accountKey}`, cfg, nowMs, windowStart))) return false
-    try {
-      await db.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(windowStart - 1).run()
-    } catch { /* ignore cleanup errors */ }
+    await maybeCleanupRateLimits(db, nowMs)
     return true
   } catch {
+    if (AUTH_SENSITIVE_LIMITERS.has(name)) return false
     return checkRate(null, request, name, accountKey)
   }
 }
@@ -194,6 +224,7 @@ export async function checkRateD1Account(db, name, accountKey) {
   try {
     return await checkRateD1Key(db, `${name}:acct:${accountKey}`, cfg, nowMs, windowStart)
   } catch {
+    if (AUTH_SENSITIVE_LIMITERS.has(name)) return false
     return rateLimit(`${name}:acct:${accountKey}`, cfg.limit, cfg.windowMs)
   }
 }
@@ -267,15 +298,21 @@ export function isCodeFormat(v) {
 export function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) && email.length <= 254
 }
-export function isValidPassword(password) {
+export function isValidPassword(password, email) {
   // Length alone is not enough: a simple password like 12 repeated
   // characters must be rejected. Require mixed characters — at least one
   // lowercase, one uppercase, one digit, and one symbol (any character
   // that is not a letter or digit). The frontend uses the identical rule
   // (shared.js isPasswordOk) so the user is told before submitting, and
   // the server re-checks it — client-side checks alone are never trusted.
-  return typeof password === 'string' && password.length >= 12 && password.length <= 128 &&
-    /[a-z]/.test(password) && /[A-Z]/.test(password) && /[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)
+  if (typeof password !== 'string' || password.length < 12 || password.length > 128) return false
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) return false
+  if (COMMON_PASSWORDS.has(password.toLowerCase())) return false
+  if (typeof email === 'string') {
+    const local = email.split('@')[0].trim().toLowerCase()
+    if (local.length >= 3 && password.toLowerCase().includes(local)) return false
+  }
+  return true
 }
 export function isValidName(name) {
   // Length only is not enough: a name must never contain markup or
@@ -302,5 +339,6 @@ export function publicUser(user) {
     lastName: user.last_name || '',
     phone: user.phone || '',
     mfaEnabled: user.mfa_enabled === 1,
+    mustChangePassword: user.must_change_password === 1,
   }
 }

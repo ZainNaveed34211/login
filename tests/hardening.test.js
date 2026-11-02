@@ -19,7 +19,7 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 function fresh() { const db = new MockD1(); return { db, env: testEnv(db) } }
 const PW = 'Correct Horse Battery Staple 123!'
 
-test('concurrent duplicate registers: exactly one 201, the other 409 (never 500)', async () => {
+test('concurrent duplicate registers: exactly one 201, the other 400 (never 500)', async () => {
   const { db, env } = fresh()
   resetRateLimits()
   const [a, b] = await Promise.all([
@@ -27,7 +27,7 @@ test('concurrent duplicate registers: exactly one 201, the other 409 (never 500)
     call(env, '/auth/register', 'POST', { email: 'race@example.com', password: PW }, { ip: '10.4.0.2' }),
   ])
   const statuses = [a.status, b.status].sort()
-  assert.deepEqual(statuses, [201, 409])
+  assert.deepEqual(statuses, [201, 400])
   assert.equal(db.tables.users.length, 1)
   assert.equal(db.tables.entitlements.length, 1)
 })
@@ -268,7 +268,7 @@ test('client input is validated before use: bad types, markup, and oversized val
   assert.equal(hugeCookie.status, 401)
 })
 
-test('session cookie flags: HttpOnly + 2-day expiry in both modes, Secure + SameSite=None in production mode', async () => {
+test('session cookie flags: HttpOnly + 2-day expiry in both modes, Secure + SameSite=Lax + __Host- prefix in production mode', async () => {
   // loginWithMfa returns only the bare cookie (split on ';'), so
   // capture the full Set-Cookie header via direct calls here.
   async function loginCookie(env, email, password, secret, ip) {
@@ -293,7 +293,8 @@ test('session cookie flags: HttpOnly + 2-day expiry in both modes, Secure + Same
   const prodCookie = await loginCookie(prod.env, 'cookie2@example.com', PW, secret2, '10.5.1.2')
   assert.ok(prodCookie.includes('HttpOnly'))
   assert.ok(prodCookie.includes('Secure'), 'production cookie must be Secure')
-  assert.ok(prodCookie.includes('SameSite=None'), 'production cross-subdomain cookie must be SameSite=None')
+  assert.ok(prodCookie.includes('SameSite=Lax'), 'production cookie must be SameSite=Lax')
+  assert.ok(prodCookie.startsWith('__Host-kluzar_session='), 'production cookie must use the __Host- prefix')
   assert.ok(prodCookie.includes('Max-Age=172800'))
 })
 

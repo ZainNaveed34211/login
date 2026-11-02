@@ -24,16 +24,16 @@ export async function createSession(db, userId, userAgent, ipHashValue, scope = 
   const tokenHash = await sha256Hex(token)
   const csrfToken = randomToken(24)
   const id = randomToken(16)
-  const expiresAt = isoPlus(2 * 24 * 60 * 60 * 1000) // 2 days, server-enforced
+  const expiresAt = scope === 'admin' ? isoPlus(8 * 60 * 60 * 1000) : isoPlus(2 * 24 * 60 * 60 * 1000)
   // User-Agent is untrusted client input: cap it before storage so a
   // huge header cannot bloat the sessions table. The value is never
   // rendered as HTML (frontend uses textContent only).
   const safeAgent = String(userAgent || '').slice(0, 500)
   await db
     .prepare(
-      'INSERT INTO sessions (id, user_id, token_hash, csrf_token, user_agent, ip_hash, created_at, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO sessions (id, user_id, token_hash, csrf_token, user_agent, ip_hash, created_at, expires_at, scope, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .bind(id, userId, tokenHash, csrfToken, safeAgent, ipHashValue || '', nowIso(), expiresAt, scope)
+    .bind(id, userId, tokenHash, csrfToken, safeAgent, ipHashValue || '', nowIso(), expiresAt, scope, nowIso())
     .run()
   return { id, token, csrfToken, expiresAt }
 }
