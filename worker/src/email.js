@@ -21,8 +21,8 @@ export async function sendVerificationEmail(env, email, code) {
     to: [{ email }],
     replyTo: { email: 'info@kluzar.com' },
     subject: 'Your Kluzar verification code',
-    htmlContent: '<p>Your Kluzar verification code is:</p><p><strong>' + code + '</strong></p><p>This code expires in 15 minutes. If you did not request this code, you can ignore this email.</p><p>If you cannot find this email, check your spam folder. Gmail users: also check the Promotions tab.</p>',
-    textContent: 'Your Kluzar verification code is: ' + code + '\nThis code expires in 15 minutes. If you did not request this code, you can ignore this email.\nIf you cannot find this email, check your spam folder. Gmail users: also check the Promotions tab.',
+    htmlContent: '<p>Your Kluzar verification code is:</p><p><strong>' + code + '</strong></p><p>This code expires in 15 minutes. If you did not request this code, you can ignore this email.</p>',
+    textContent: 'Your Kluzar verification code is: ' + code + '\nThis code expires in 15 minutes. If you did not request this code, you can ignore this email.',
   })
 }
 
@@ -32,7 +32,7 @@ export async function sendSignInEmail(env, email, code) {
     to: [{ email }],
     replyTo: { email: 'info@kluzar.com' },
     subject: 'Your Kluzar sign-in code',
-    htmlContent: '<p>Your Kluzar sign-in code is:</p><p><strong>' + code + '</strong></p><p>This code expires in 15 minutes. If you did not request this code, you can ignore this email.</p><p>If you cannot find this email, check your spam folder. Gmail users: also check the Promotions tab.</p>',
-    textContent: 'Your Kluzar sign-in code is: ' + code + '\nThis code expires in 15 minutes. If you did not request this code, you can ignore this email.\nIf you cannot find this email, check your spam folder. Gmail users: also check the Promotions tab.',
+    htmlContent: '<p>Your Kluzar sign-in code is:</p><p><strong>' + code + '</strong></p><p>This code expires in 15 minutes. If you did not request this code, you can ignore this email.</p>',
+    textContent: 'Your Kluzar sign-in code is: ' + code + '\nThis code expires in 15 minutes. If you did not request this code, you can ignore this email.',
   })
 }

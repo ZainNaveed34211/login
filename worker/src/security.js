@@ -121,6 +121,7 @@ export const RATE_LIMITS = {
   oauthStart: { limit: 20, windowMs: 15 * 60 * 1000 },
   oauthCallback: { limit: 20, windowMs: 15 * 60 * 1000 },
   oauthHandoff: { limit: 10, windowMs: 15 * 60 * 1000 },
+  oauthMfaDefer: { limit: 10, windowMs: 15 * 60 * 1000 },
   manageAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
   businessAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
   dashAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },

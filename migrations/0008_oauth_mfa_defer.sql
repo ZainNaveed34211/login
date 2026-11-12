@@ -1,0 +1,2 @@
+ALTER TABLE setup_tokens ADD COLUMN source TEXT NOT NULL DEFAULT 'password';
+ALTER TABLE users ADD COLUMN password_set INTEGER NOT NULL DEFAULT 1;

@@ -10,60 +10,156 @@
 <script>(function(){try{fetch('https://account-api.kluzar.com/auth/session',{credentials:'include'}).then(function(r){if(!r.ok){window.location.href='/login/'}}).catch(function(){window.location.href='/login/'})}catch(e){window.location.href='/login/'}})();</script>
 <script src="/config.js"></script>
 <script src="/logo.js"></script>
+<script src="/logo-dark.js"></script>
 </head>
 <body data-page="dashboard">
 <header class="topbar" id="site-header"></header>
 <main class="shell">
 <div id="global-error" class="alert error hidden" role="alert"></div>
 <div id="global-info" class="alert info hidden" role="status"></div>
-<section class="view">
-<div class="dash-hero">
-<h1>Welcome back</h1>
-<p class="lead">Your profile, subscription and security — managed from your Kluzar account.</p>
-<div class="action-row">
-<a class="btn-secondary" href="https://kluzar.com/" aria-label="Go to Kluzar homepage">← Home</a>
+<div class="dash-layout">
+<aside class="dash-sidebar" aria-label="Account navigation">
+<a class="dash-brand" href="/dashboard/"><img id="side-logo" alt="Kluzar" /></a>
+<nav class="dash-nav">
+<a class="dash-nav-item active" href="/dashboard/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9.5 12 3l9 6.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg><span>Dashboard</span></a>
+<a class="dash-nav-item" href="#subscription"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 12 4l9 4.5v1L12 14 3 9.5z"/><path d="m3 12 9 4.5L21 12"/><path d="m3 15.5 9 4.5 9-4.5"/></svg><span>Subscription</span></a>
+<a class="dash-nav-item" href="#products"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8.5 12 3 3 8.5v7L12 21l9-5.5z"/><path d="M3 8.5 12 14l9-5.5"/><path d="M12 14v7"/></svg><span>Products</span></a>
+<a class="dash-nav-item" href="#security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5.5v5.6c0 5 3.4 8.6 8 10.4 4.6-1.8 8-5.4 8-10.4V5.5z"/><path d="m8.5 11.5 2.5 2.5 4.5-5"/></svg><span>Security</span></a>
+<a class="dash-nav-item" href="/profile/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.23.6.86 1 1.55 1H21a2 2 0 1 1 0 4h-.09c-.69 0-1.32.4-1.51 1z"/></svg><span>Account Settings</span></a>
+<a class="dash-nav-item" href="https://support.kluzar.com/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0"/><rect x="2.5" y="13" width="4.5" height="6.5" rx="2"/><rect x="17" y="13" width="4.5" height="6.5" rx="2"/><path d="M20 19a3 3 0 0 1-3 3h-3"/></svg><span>Support</span></a>
+</nav>
+<div class="dash-side-card" id="side-upgrade-card">
+<p class="dash-side-title">Upgrade to Max</p>
+<p class="dash-side-text">Unlock the full power of Kluzar services.</p>
+<a class="btn-side" href="https://payments.kluzar.com/">View Plans →</a>
 </div>
+<div class="dash-side-card hidden" id="side-max-card">
+<p class="dash-side-title">Max plan active</p>
+<p class="dash-side-text">You have the full power of Kluzar services.</p>
 </div>
-<div class="card">
-<h2>Profile</h2>
-<p><strong>Email:</strong> <span id="dash-email"></span></p>
-<p><strong>Name:</strong> <span id="dash-name"></span> · <strong>Phone:</strong> <span id="dash-phone"></span></p>
-<p><strong>Authenticator:</strong> <span id="dash-mfa"></span></p>
-<a class="btn-secondary" href="/profile/">Edit profile</a>
+<div class="dash-user">
+<span class="dash-avatar" id="side-avatar"></span>
+<span class="dash-user-meta"><strong id="side-name"></strong><span id="side-email"></span></span>
+<button type="button" class="dash-logout" id="side-logout">Log out</button>
 </div>
-<div class="card">
-<h2>Subscription</h2>
-<div id="entitlement-loading"><p>Checking your subscription…</p></div>
-<div id="entitlement-error" class="hidden"><p>We could not load your subscription right now.</p><button type="button" class="btn-secondary" id="entitlement-retry">Try again</button></div>
-<div id="entitlement-content" class="hidden">
-<p><strong>Plan:</strong> <span id="ent-plan"></span> · <strong>Status:</strong> <span id="ent-status"></span></p>
-<p class="muted" id="ent-note"></p>
-<a id="get-premium-btn" class="btn-primary btn-amber hidden" href="#">Get Premium →</a>
+</aside>
+<div class="dash-main">
+<div class="dash-topbar">
+<div class="dash-search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+<input id="dash-search" type="search" placeholder="Search anything... (SEO, security, account, etc.)" aria-label="Search dashboard" autocomplete="off" />
+<kbd>Ctrl K</kbd>
 </div>
+<span class="dash-pill" id="dash-secure-pill">Account Secure</span>
 </div>
-<div class="card">
-<h2>Kluzar products</h2>
-<p class="muted">All Kluzar services, in one place.</p>
-<div class="action-row">
-<a class="btn-secondary" href="https://seo.kluzar.com/">SEO</a>
-<a class="btn-secondary" href="https://manage.kluzar.com/">Manage</a>
-<a class="btn-secondary" href="https://business.kluzar.com/">Business</a>
-<a class="btn-secondary" href="https://dash.kluzar.com/">Company Dashboard</a>
+<div id="mfa-banner" class="mfa-banner hidden" role="alert">
+<button type="button" class="mfa-banner-close" id="mfa-banner-close" aria-label="Dismiss">×</button>
+<h2>Secure your account with an authenticator</h2>
+<p>Your account does not have two-factor authentication yet. Set up your authenticator app now to keep your account secure.</p>
+<a class="btn-banner" href="/authenticator/">Set up now →</a>
 </div>
+<section class="dash-welcome">
+<h1 id="dash-greeting">Welcome back!</h1>
+<p class="lead">Manage your Kluzar products, subscription and keep your account secure.</p>
+<p class="muted" id="dash-last-login"></p>
+</section>
+<section class="plan-banner" id="subscription">
+<div class="plan-banner-copy">
+<p class="plan-eyebrow">Your Plan</p>
+<h2 id="plan-name">Free Plan</h2>
+<p id="plan-note">You are on the free plan. Get Premium to unlock more powerful features.</p>
+<a id="get-premium-btn" class="btn-plan-upgrade" href="https://payments.kluzar.com/">Upgrade to Premium →</a>
 </div>
-<div class="card">
+<div class="plan-benefits">
+<p class="plan-eyebrow">Plan Benefits (<span id="plan-benefits-name">Free</span>)</p>
+<ul id="plan-benefits-list"></ul>
+</div>
+<div class="plan-art" aria-hidden="true">
+<svg viewBox="0 0 220 120" fill="none"><rect x="8" y="34" width="64" height="64" rx="12" fill="rgba(255,255,255,.14)"/><path d="M24 78V60l10-8 10 6 10-12" stroke="#00c2ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 78h30" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M110 14c22 0 34 14 34 32 0 24-16 40-34 40s-34-16-34-40c0-18 12-32 34-32z" fill="rgba(255,255,255,.14)"/><path d="m100 46 8 8 16-16" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M168 78c10-14 28-16 36-6s2 26-10 32-26 2-30-8 0-14 4-18z" fill="rgba(0,194,255,.35)"/><path d="M188 62l14-16 4 10 8-2-8 14z" fill="#fff"/></svg>
+</div>
+</section>
+<section class="card" id="products">
+<div class="section-head">
+<div>
+<h2>Our Products</h2>
+<p class="muted">Access all Kluzar services in one place.</p>
+</div>
+<a class="btn-secondary" href="https://tech.kluzar.com/">Explore All Tools →</a>
+</div>
+<div class="product-grid" id="product-grid">
+<a class="product-card" data-search-card href="https://seo.kluzar.com/">
+<span class="product-icon icon-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg></span>
+<strong>SEO</strong>
+<span class="product-desc">Audit, optimize and improve your website.</span>
+<span class="product-foot"><span class="free-pill"><span class="dot"></span>Free to start</span><span class="go-arrow">→</span></span>
+</a>
+<a class="product-card" data-search-card href="https://manage.kluzar.com/">
+<span class="product-icon icon-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
+<strong>Manage</strong>
+<span class="product-desc">Organize and grow your business.</span>
+<span class="product-foot"><span class="free-pill"><span class="dot"></span>Free to start</span><span class="go-arrow">→</span></span>
+</a>
+<a class="product-card" data-search-card href="https://business.kluzar.com/">
+<span class="product-icon icon-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg></span>
+<strong>Business</strong>
+<span class="product-desc">Run and scale your business efficiently.</span>
+<span class="product-foot"><span class="free-pill"><span class="dot"></span>Free to start</span><span class="go-arrow">→</span></span>
+</a>
+<a class="product-card" data-search-card href="https://dash.kluzar.com/">
+<span class="product-icon icon-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></span>
+<strong>Company Dashboard</strong>
+<span class="product-desc">Manage your company in one place.</span>
+<span class="product-foot"><span class="free-pill"><span class="dot"></span>Free to start</span><span class="go-arrow">→</span></span>
+</a>
+<a class="product-card premium-upsell" id="premium-upsell-card" href="https://payments.kluzar.com/">
+<span class="upsell-pill">★ Premium Features</span>
+<strong>Get More with Kluzar Premium</strong>
+<span class="product-desc">Unlock advanced tools, priority support and more.</span>
+<span class="product-foot"><span class="btn-upsell">Upgrade Now →</span></span>
+</a>
+</div>
+<p class="muted hidden" id="search-empty">No products or security options match your search.</p>
+</section>
+<section class="card" id="security">
+<div class="section-head">
+<div>
 <h2>Security</h2>
-<div class="action-row">
-<a class="btn-secondary" href="/change-password/">Change password</a>
-<a class="btn-secondary" href="/authenticator/">Manage authenticator</a>
-<a class="btn-secondary" href="/sessions/">Active sessions</a>
-<a class="btn-secondary" href="/recovery-codes/regenerate/">Regenerate recovery codes</a>
+<p class="muted">Keep your account and data safe and secure.</p>
 </div>
+<a class="btn-secondary" href="/authenticator/">Manage Security →</a>
 </div>
+<div class="security-grid">
+<a class="security-card" data-search-card href="/change-password/">
+<span class="product-icon icon-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+<strong>Change Password</strong>
+<span class="product-desc">Update your password regularly.</span>
+<span class="go-arrow">→</span>
+</a>
+<a class="security-card" data-search-card href="/authenticator/">
+<span class="product-icon icon-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5.5v5.6c0 5 3.4 8.6 8 10.4 4.6-1.8 8-5.4 8-10.4V5.5z"/><path d="m8.5 11.5 2.5 2.5 4.5-5"/></svg></span>
+<strong>Manage Authenticator</strong>
+<span class="product-desc">Enable 2FA for extra security.</span>
+<span class="go-arrow">→</span>
+</a>
+<a class="security-card" data-search-card href="/sessions/">
+<span class="product-icon icon-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
+<strong>Active Sessions</strong>
+<span class="product-desc">View and manage devices.</span>
+<span class="go-arrow">→</span>
+</a>
+<a class="security-card" data-search-card href="/recovery-codes/regenerate/">
+<span class="product-icon icon-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg></span>
+<strong>Regenerate Recovery Codes</strong>
+<span class="product-desc">Get new recovery codes.</span>
+<span class="go-arrow">→</span>
+</a>
+</div>
+</section>
 <div class="dash-foot">
 <button type="button" class="btn-secondary" id="dash-logout-all">Log out of all devices</button>
 </div>
-</section>
+</div>
+</div>
 </main>
 <footer class="footer" id="site-footer"></footer>
 <script src="/shared.js"></script>
