@@ -135,7 +135,6 @@ export async function sendWelcomeEmailOnce(env, userId, email) {
     try {
       await env.DB.prepare('UPDATE users SET welcome_email_sent = ? WHERE id = ?').bind(0, userId).run()
     } catch {
-      // Flag stays claimed; the account setup already succeeded and a later trigger cannot resend.
     }
   }
   return ok

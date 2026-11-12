@@ -881,7 +881,7 @@ export async function handleRequest(request, env) {
       const freshUser = await getUserById(env.DB, user.id)
       const session = await createSession(env.DB, user.id, userAgent, ipH)
       await audit(env.DB, user.id, 'oauth_mfa_deferred', ipH, true, '')
-      try { await sendWelcomeEmailOnce(env, user.id, user.email) } catch { /* welcome email must never break activation */ }
+      try { await sendWelcomeEmailOnce(env, user.id, user.email) } catch {}
       return jsonResponse(env, request, 200, { ok: true, user: publicUser(freshUser), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
     }
 
@@ -1000,7 +1000,7 @@ export async function handleRequest(request, env) {
         // 30-second code, which replay protection would rightly reject.
         const activatedUser = await getUserById(env.DB, setupRow.user_id)
         const session = await createSession(env.DB, setupRow.user_id, userAgent, ipH)
-        try { await sendWelcomeEmailOnce(env, setupRow.user_id, activatedUser.email) } catch { /* welcome email must never break activation */ }
+        try { await sendWelcomeEmailOnce(env, setupRow.user_id, activatedUser.email) } catch {}
         return jsonResponse(env, request, 200, { ok: true, activated: true, recoveryCodes: codes, user: publicUser(activatedUser), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
       }
       // B) Login challenge (TOTP or recovery code)
