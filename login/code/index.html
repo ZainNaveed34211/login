@@ -19,8 +19,8 @@
 <p class="lead">Enter the 6-digit code from your authenticator app. If you lost access to the app, use one of your recovery codes instead.</p>
 <form id="form-mfa-verify">
 <label for="mfa-code">Authenticator code or recovery code</label>
-<input id="mfa-code" type="text" autocomplete="one-time-code" required placeholder="123456 or XXXX-XXXX-XXXX-XXXX" />
-<button type="submit" class="btn-primary">Verify and sign in →</button>
+<input id="mfa-code" class="code-input" type="text" autocomplete="one-time-code" required placeholder="123456 or XXXX-XXXX-XXXX-XXXX" />
+<button type="submit" class="btn-primary">Verify and sign in</button>
 </form>
 <p class="muted" id="send-email-code-row">No access to your authenticator app? <button type="button" class="link" id="send-email-code">Send code to email instead</button></p>
 <p class="muted hidden" id="email-code-actions"><button type="button" class="link" id="resend-email-code">Resend code</button> · <button type="button" class="link" id="use-authenticator">Use authenticator app instead</button></p>

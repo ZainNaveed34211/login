@@ -126,10 +126,10 @@
     const header = $('site-header')
     if (header) {
       header.innerHTML = '<div class="topbar-inner">' +
-        '<a class="brand" href="/login/"><img id="brand-logo" alt="Kluzar" /><span>Accounts</span></a>' +
+        '<a class="brand" href="/login/"><img id="brand-logo" alt="Kluzar" /></a>' +
         '<nav class="topnav" aria-label="Account">' +
         (authed ? '<button type="button" id="nav-dashboard" class="nav-btn">Dashboard</button><button type="button" id="nav-logout" class="nav-btn">Log out</button>' : '') +
-        '</nav></div>'
+        '</nav><span class="wordmark">Accounts</span></div>'
       if (window.KLUZAR_LOGO_URL) $('brand-logo').src = window.KLUZAR_LOGO_URL
       const dash = $('nav-dashboard')
       if (dash) dash.addEventListener('click', () => go('/dashboard/'))
