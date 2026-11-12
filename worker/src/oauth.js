@@ -2,6 +2,7 @@ import { b64url, randomToken } from './crypto.js'
 import { isValidEmail } from './security.js'
 
 export const OAUTH_REDIRECT_BASE = 'https://accounts.kluzar.com'
+export const OAUTH_CALLBACK_BASE = 'https://account-api.kluzar.com'
 export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 export const OAUTH_HANDOFF_TTL_MS = 5 * 60 * 1000
 
@@ -42,7 +43,7 @@ export function oauthConfig(provider, env) {
     provider,
     clientId,
     clientSecret,
-    redirectUri: OAUTH_REDIRECT_BASE + '/auth/' + provider + '/callback',
+    redirectUri: OAUTH_CALLBACK_BASE + '/auth/' + provider + '/callback',
     authorizeUrl: p.authorizeUrl,
     tokenUrl: p.tokenUrl,
     jwksUrl: p.jwksUrl,
