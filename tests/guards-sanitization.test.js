@@ -54,10 +54,11 @@ test('sanitization: frontend never renders user-controlled data as HTML', () => 
 })
 
 test('sanitization: frontend validates input before sending it to the API', () => {
-  for (const fn of ['isEmailFormat', 'isPasswordOk', 'isCodeFormat', 'isNameOk', 'isPhoneOk']) {
+  for (const fn of ['isEmailFormat', 'isPasswordOk', 'isCodeFormat', 'isRecoveryCodeFormat', 'isNameOk', 'isPhoneOk']) {
     assert.ok(shared.includes(fn), `shared.js must define ${fn}`)
   }
-  assert.ok(shared.includes("if (!isCodeFormat($('mfa-code').value))"), 'MFA code must be checked client-side')
+  assert.ok(shared.includes("if (!isCodeFormat(codeValue)) { showError('Enter the 6-digit email code.'); return }"), 'email code must be 6 digits client-side')
+  assert.ok(shared.includes("} else if (!isCodeFormat(codeValue) && !isRecoveryCodeFormat(codeValue)) {"), 'authenticator code or recovery code must be checked client-side')
   assert.ok(shared.includes("if (!isPasswordOk($('change-new').value))"), 'new password must be checked client-side')
 })
 
