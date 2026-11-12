@@ -32,6 +32,7 @@
   const isEmailFormat = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) && v.length <= 254
   const isPasswordOk = (v) => typeof v === 'string' && v.length >= 12 && v.length <= 128 && /[a-z]/.test(v) && /[A-Z]/.test(v) && /[0-9]/.test(v) && /[^A-Za-z0-9]/.test(v)
   const isCodeFormat = (v) => /^\d{6}$/.test(String(v || '').trim())
+  const isRecoveryCodeFormat = (v) => /^[A-Za-z0-9]{16}$/.test(String(v || '').replace(/[^A-Za-z0-9]/g, ''))
   const isNameOk = (v) => v === '' || (typeof v === 'string' && v.length <= 100 && !/[<>&\u0000-\u001F\u007F]/.test(v))
   const isPhoneOk = (v) => v === '' || (typeof v === 'string' && v.length <= 50 && /[0-9]/.test(v) && /^[0-9+\s().-]+$/.test(v))
   const $ = (id) => document.getElementById(id)
@@ -626,7 +627,13 @@
       })
       $('form-mfa-verify').addEventListener('submit', async (e) => {
         e.preventDefault()
-        if (!isCodeFormat($('mfa-code').value)) { showError(emailMode ? 'Enter the 6-digit email code.' : 'Enter the 6-digit authenticator code.'); return }
+        const codeValue = $('mfa-code').value
+        if (emailMode) {
+          if (!isCodeFormat(codeValue)) { showError('Enter the 6-digit email code.'); return }
+        } else if (!isCodeFormat(codeValue) && !isRecoveryCodeFormat(codeValue)) {
+          showError('Enter the 6-digit authenticator code or a recovery code.')
+          return
+        }
         try {
           if (emailMode) {
             await api('/auth/mfa/email/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })

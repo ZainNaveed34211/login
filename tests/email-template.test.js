@@ -4,11 +4,13 @@ import { sendVerificationEmail, sendSignInEmail } from '../worker/src/email.js'
 import { stubBrevo } from './helpers.js'
 
 const CODE = '482917'
+const EVIL_EMAIL = 'a"><script>alert(1)</script>@example.com'
+const EVIL_EMAIL_ESCAPED = 'a&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;@example.com'
 
-async function capture(sendFn) {
+async function capture(sendFn, email) {
   const stub = stubBrevo()
   try {
-    const ok = await sendFn({ BREVO_API_KEY: 'test-brevo-key' }, 'template@example.com', CODE)
+    const ok = await sendFn({ BREVO_API_KEY: 'test-brevo-key' }, email || 'template@example.com', CODE)
     assert.equal(ok, true)
     assert.equal(stub.sent.length, 1)
     return JSON.parse(stub.sent[0].options.body)
@@ -17,9 +19,17 @@ async function capture(sendFn) {
   }
 }
 
-for (const [name, sendFn, subject, title] of [
-  ['verification', sendVerificationEmail, 'Your Kluzar verification code', 'Your verification code'],
-  ['sign-in', sendSignInEmail, 'Your Kluzar sign-in code', 'Your sign-in code'],
+function textOf(html) {
+  return html.replace(/<[^>]*>/g, '')
+}
+
+function boxDigits(html) {
+  return [...html.matchAll(/border:2px solid #d9d7e8[^>]*>(\d)<\/td>/g)].map((m) => m[1]).join('')
+}
+
+for (const [name, sendFn, subject, title, verifyUrl] of [
+  ['verification', sendVerificationEmail, 'Your Kluzar verification code', 'Verify your email address', 'https://accounts.kluzar.com/signup/verify/'],
+  ['sign-in', sendSignInEmail, 'Your Kluzar sign-in code', 'Your sign-in code', 'https://accounts.kluzar.com/login/code/'],
 ]) {
   test(name + ' email keeps sender, subject and plain-text code', async () => {
     const body = await capture(sendFn)
@@ -30,6 +40,8 @@ for (const [name, sendFn, subject, title] of [
     assert.equal(body.to[0].email, 'template@example.com')
     assert.match(body.textContent, new RegExp('^[^\\d]*' + CODE))
     assert.match(body.textContent, /15 minutes/)
+    assert.ok(body.textContent.includes('This code was sent to template@example.com'))
+    assert.ok(body.textContent.includes(verifyUrl))
     assert.match(body.textContent, /https:\/\/kluzar\.com/)
     assert.match(body.textContent, /https:\/\/contact\.kluzar\.com/)
     assert.match(body.textContent, /https:\/\/support\.kluzar\.com/)
@@ -39,7 +51,6 @@ for (const [name, sendFn, subject, title] of [
   test(name + ' email html is a branded inline-styled template', async () => {
     const body = await capture(sendFn)
     assert.ok(body.htmlContent.includes(title))
-    assert.ok(body.htmlContent.includes(CODE))
     assert.ok(body.htmlContent.includes('https://kluzar.com/logo.png'))
     assert.ok(body.htmlContent.includes('href="https://kluzar.com"'))
     assert.ok(body.htmlContent.includes('href="https://contact.kluzar.com"'))
@@ -51,6 +62,43 @@ for (const [name, sendFn, subject, title] of [
     assert.doesNotMatch(body.htmlContent, /<style/i)
     assert.doesNotMatch(body.htmlContent, /@import|fonts\.googleapis|fonts\.gstatic/i)
     assert.doesNotMatch(body.htmlContent, /Promotions tab/)
+  })
+
+  test(name + ' email shows the code in 6 separate boxes', async () => {
+    const body = await capture(sendFn)
+    assert.equal((body.htmlContent.match(/border:2px solid #d9d7e8/g) || []).length, 6)
+    assert.equal(boxDigits(body.htmlContent), CODE)
+  })
+
+  test(name + ' email code reads as one contiguous code for Gmail OTP detection', async () => {
+    const body = await capture(sendFn)
+    const text = textOf(body.htmlContent)
+    assert.ok(text.includes(CODE))
+    assert.deepEqual(text.match(/\d{6}/g), [CODE])
+    assert.ok(body.textContent.includes(CODE))
+  })
+
+  test(name + ' email shows the recipient address, escaped in html', async () => {
+    const body = await capture(sendFn, EVIL_EMAIL)
+    assert.ok(body.htmlContent.includes('This code was sent to'))
+    assert.ok(body.htmlContent.includes(EVIL_EMAIL_ESCAPED))
+    assert.doesNotMatch(body.htmlContent, /<script/i)
+    assert.ok(!body.htmlContent.includes(EVIL_EMAIL))
+    assert.ok(body.textContent.includes('This code was sent to ' + EVIL_EMAIL))
+  })
+
+  test(name + ' email button goes to the verify page, not labelled Copy code', async () => {
+    const body = await capture(sendFn)
+    assert.ok(body.htmlContent.includes('href="' + verifyUrl + '"'))
+    assert.ok(body.htmlContent.includes('>Enter your code</a>'))
+    assert.doesNotMatch(body.htmlContent, />Copy code</)
+    assert.doesNotMatch(body.htmlContent, />Verify Email</)
+    assert.ok(body.htmlContent.includes('href="https://contact.kluzar.com"'))
+    assert.ok(body.htmlContent.includes('>Contact</a>'))
+    assert.ok(body.htmlContent.includes('href="https://support.kluzar.com"'))
+    assert.ok(body.htmlContent.includes('>Support</a>'))
+    assert.ok(body.htmlContent.includes('href="https://kluzar.com"'))
+    assert.ok(body.htmlContent.includes('>Visit Web</a>'))
   })
 }
 
