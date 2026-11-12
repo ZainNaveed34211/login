@@ -48,11 +48,20 @@ body[data-page="dashboard"] .card { padding: 26px; }
 .dash-user-meta strong { font-size: 14px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash-user-meta span { font-size: 12px; color: rgba(255,255,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash-logout { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; padding: 8px 14px; min-height: 36px; font-size: 13px; }
+.dash-mobilebar { display: none; position: sticky; top: 0; z-index: 40; align-items: center; gap: 12px; background: #fff; border-bottom: 1px solid var(--border); padding: 10px 16px; }
+.dash-menu-btn { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+.dash-menu-btn span { display: block; width: 20px; height: 2px; border-radius: 2px; background: var(--navy); transition: transform .2s ease, opacity .2s ease; }
+body.dash-nav-open .dash-menu-btn span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+body.dash-nav-open .dash-menu-btn span:nth-child(2) { opacity: 0; }
+body.dash-nav-open .dash-menu-btn span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+.dash-mobile-brand { display: flex; align-items: center; }
+.dash-mobile-brand img { height: 30px; width: auto; display: block; }
+.dash-scrim { display: none; }
 .dash-main { flex: 1; min-width: 0; padding: 26px 32px 48px; max-width: 1180px; }
 .dash-topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
 .dash-search { flex: 1; display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid var(--border); border-radius: 999px; padding: 0 18px; min-height: 52px; }
 .dash-search svg { width: 20px; height: 20px; color: var(--muted); flex: none; }
-.dash-search input { border: none; padding: 0; min-height: 0; font-size: 15px; }
+.dash-search input { border: none; padding: 0; min-height: 0; min-width: 0; font-size: 15px; }
 .dash-search input:focus { box-shadow: none; }
 .dash-search kbd { font-family: inherit; font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; white-space: nowrap; }
 .dash-pill { background: #dcfce7; color: var(--green); font-weight: 700; font-size: 13px; padding: 10px 16px; border-radius: 999px; white-space: nowrap; }
@@ -108,11 +117,11 @@ body[data-page="dashboard"] .card { padding: 26px; }
 }
 @media (max-width: 900px) {
   .dash-layout { flex-direction: column; }
-  .dash-sidebar { width: auto; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 16px; gap: 14px; }
-  .dash-nav { flex-direction: row; flex-wrap: wrap; flex: 1; }
-  .dash-nav-item { padding: 9px 12px; font-size: 14px; }
-  .dash-side-card { margin-top: 0; flex: 1 1 220px; }
-  .dash-user { flex: 1 1 100%; border-top: none; padding-top: 0; }
+  .dash-mobilebar { display: flex; }
+  .dash-sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 60; width: 284px; max-width: 86vw; height: 100dvh; transform: translateX(-105%); transition: transform .25s ease; box-shadow: 0 0 60px rgba(19,17,48,.35); }
+  body.dash-nav-open { overflow: hidden; }
+  body.dash-nav-open .dash-sidebar { transform: translateX(0); }
+  .dash-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(19,17,48,.5); }
   .dash-main { padding: 20px 16px 40px; }
   .product-grid { grid-template-columns: repeat(2, 1fr); }
   .plan-banner { grid-template-columns: 1fr; }
@@ -188,9 +197,18 @@ form button[type="submit"] { margin-top: 20px; width: 100%; }
   .shell { padding: 36px 16px 48px; }
   .plan-banner { padding: 24px 20px; }
   .mfa-banner { padding: 22px 20px; }
+  .mfa-banner h2 { font-size: 20px; }
+  .plan-banner-copy h2 { font-size: 23px; }
   .product-grid, .security-grid { grid-template-columns: 1fr; }
   .section-head { flex-direction: column; }
   h1 { font-size: 25px; }
+  .dash-welcome h1 { font-size: 26px; }
+  .dash-main { padding: 18px 14px 36px; }
+  .dash-topbar { flex-wrap: wrap; }
+  .dash-search { flex: 1 1 100%; min-height: 50px; }
+  .dash-search input { font-size: 16px; }
+  .dash-pill { padding: 8px 14px; }
+  #dash-logout-all { width: 100%; }
   .code-list { grid-template-columns: 1fr; }
   .topbar-inner { padding: 12px 14px; gap: 10px; }
   .topnav { gap: 6px; }

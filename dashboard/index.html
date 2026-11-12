@@ -18,7 +18,11 @@
 <div id="global-error" class="alert error hidden" role="alert"></div>
 <div id="global-info" class="alert info hidden" role="status"></div>
 <div class="dash-layout">
-<aside class="dash-sidebar" aria-label="Account navigation">
+<div class="dash-mobilebar">
+<button type="button" class="dash-menu-btn" id="dash-menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="dash-sidebar"><span></span><span></span><span></span></button>
+<a class="dash-mobile-brand" href="/dashboard/"><img id="mobile-logo" alt="Kluzar" /></a>
+</div>
+<aside class="dash-sidebar" id="dash-sidebar" aria-label="Account navigation">
 <a class="dash-brand" href="/dashboard/"><img id="side-logo" alt="Kluzar" /></a>
 <nav class="dash-nav">
 <a class="dash-nav-item active" href="/dashboard/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9.5 12 3l9 6.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg><span>Dashboard</span></a>
@@ -43,6 +47,7 @@
 <button type="button" class="dash-logout" id="side-logout">Log out</button>
 </div>
 </aside>
+<div class="dash-scrim hidden" id="dash-scrim" aria-hidden="true"></div>
 <div class="dash-main">
 <div class="dash-topbar">
 <div class="dash-search">

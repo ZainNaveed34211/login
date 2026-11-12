@@ -248,6 +248,22 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); input.focus() }
     })
   }
+  function setupDashMenu() {
+    const btn = $('dash-menu-btn')
+    const sidebar = $('dash-sidebar')
+    const scrim = $('dash-scrim')
+    if (!btn || !sidebar) return
+    function setOpen(open) {
+      document.body.classList.toggle('dash-nav-open', open)
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false')
+      btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu')
+      if (scrim) scrim.classList.toggle('hidden', !open)
+    }
+    btn.addEventListener('click', () => setOpen(!document.body.classList.contains('dash-nav-open')))
+    if (scrim) scrim.addEventListener('click', () => setOpen(false))
+    sidebar.querySelectorAll('.dash-nav-item').forEach((a) => a.addEventListener('click', () => setOpen(false)))
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false) })
+  }
   async function loadLastLogin() {
     try {
       const data = await api('/account/sessions', { method: 'GET' })
@@ -268,6 +284,7 @@
     const initials = (fullName || email).trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
     setText('side-avatar', initials || '?')
     if (window.KLUZAR_LOGO_DARK_URL) { const l = $('side-logo'); if (l) l.src = window.KLUZAR_LOGO_DARK_URL }
+    if (window.KLUZAR_LOGO_URL) { const m = $('mobile-logo'); if (m) m.src = window.KLUZAR_LOGO_URL }
     let mfaBannerDismissed = false
     function renderMfaBanner() {
       const banner = $('mfa-banner')
@@ -283,6 +300,7 @@
     }
     renderPlanBanner(session.entitlement)
     setupDashSearch()
+    setupDashMenu()
     loadLastLogin()
     const sideLogout = $('side-logout')
     if (sideLogout) sideLogout.addEventListener('click', logout)
