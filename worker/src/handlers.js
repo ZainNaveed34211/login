@@ -36,6 +36,7 @@ import {
 import {
   checkRateD1,
   checkRateD1Account,
+  corsHeaders,
   csrfOk,
   errorResponse,
   ipHash,
@@ -51,9 +52,21 @@ import {
   readJson,
   clientIp,
   publicUser,
+  securityHeaders,
 } from './security.js'
 import { clampPbkdf2Iterations } from './crypto.js'
 import { sendSignInEmail, sendVerificationEmail } from './email.js'
+import {
+  OAUTH_HANDOFF_TTL_MS,
+  OAUTH_REDIRECT_BASE,
+  OAUTH_STATE_TTL_MS,
+  buildAuthorizeUrl,
+  exchangeCode,
+  oauthConfig,
+  pkcePair,
+  validReturnUrl,
+  verifyIdToken,
+} from './oauth.js'
 
 function iterations(env) {
   // Workers Free native WebCrypto rejects PBKDF2 iteration counts above
@@ -73,6 +86,35 @@ function clearCookie(env) {
   const insecure = env.ALLOW_INSECURE_COOKIE === 'true'
   if (insecure) return 'kluzar_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
   return 'kluzar_session=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0'
+}
+function handoffCookie(token, env) {
+  const insecure = env.ALLOW_INSECURE_COOKIE === 'true'
+  if (insecure) return `kluzar_oauth_handoff=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=300`
+  return `kluzar_oauth_handoff=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=300`
+}
+function clearHandoffCookie(env) {
+  const insecure = env.ALLOW_INSECURE_COOKIE === 'true'
+  if (insecure) return 'kluzar_oauth_handoff=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
+  return 'kluzar_oauth_handoff=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0'
+}
+function oauthRedirect(env, request, location, extraHeaders = {}) {
+  return new Response(null, {
+    status: 302,
+    headers: { ...securityHeaders(), ...corsHeaders(env, request), Location: location, ...extraHeaders },
+  })
+}
+function isAuthCode(v) {
+  return typeof v === 'string' && v.length >= 1 && v.length <= 2048 && !/[\u0000-\u001F\u007F]/.test(v)
+}
+async function createHandoff(db, userId, kind) {
+  const token = randomToken(32)
+  const hash = await sha256Hex(token)
+  await db.batch([
+    db.prepare('DELETE FROM oauth_handoffs WHERE user_id = ? AND kind = ?').bind(userId, kind),
+    db.prepare('INSERT INTO oauth_handoffs (id, token_hash, user_id, kind, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(randomToken(16), hash, userId, kind, nowIso(), new Date(Date.now() + OAUTH_HANDOFF_TTL_MS).toISOString()),
+  ])
+  return token
 }
 function parseCookie(request) {
   const header = request.headers.get('Cookie') || ''
@@ -687,6 +729,130 @@ export async function handleRequest(request, env) {
       const session = await createSession(env.DB, user.id, userAgent, ipH)
       await audit(env.DB, user.id, 'login', ipH, true, 'email')
       return jsonResponse(env, request, 200, { ok: true, user: publicUser(user), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
+    }
+
+    // ---- OAuth: start (Google / Microsoft) ----
+    if (method === 'GET' && (path === '/auth/google' || path === '/auth/microsoft')) {
+      const provider = path === '/auth/google' ? 'google' : 'microsoft'
+      if (!(await checkRateD1(env.DB, request, 'oauthStart'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      const cfg = oauthConfig(provider, env)
+      if (!cfg) return oauthRedirect(env, request, OAUTH_REDIRECT_BASE + '/login/?oauth=error')
+      const returnUrl = validReturnUrl(url.searchParams.get('next'))
+      const state = randomToken(32)
+      const { verifier, challenge } = await pkcePair()
+      const stateHash = await sha256Hex(state)
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM oauth_states WHERE state_hash = ?').bind(stateHash),
+        env.DB.prepare('INSERT INTO oauth_states (id, state_hash, provider, code_verifier, return_url, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(randomToken(16), stateHash, provider, verifier, returnUrl, nowIso(), new Date(Date.now() + OAUTH_STATE_TTL_MS).toISOString()),
+      ])
+      return oauthRedirect(env, request, buildAuthorizeUrl(cfg, state, challenge))
+    }
+
+    // ---- OAuth: callback (Google / Microsoft) ----
+    if (method === 'GET' && (path === '/auth/google/callback' || path === '/auth/microsoft/callback')) {
+      const provider = path === '/auth/google/callback' ? 'google' : 'microsoft'
+      const fail = () => oauthRedirect(env, request, OAUTH_REDIRECT_BASE + '/login/?oauth=error')
+      if (!(await checkRateD1(env.DB, request, 'oauthCallback'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      const code = url.searchParams.get('code') || ''
+      const state = url.searchParams.get('state') || ''
+      if (!isAuthCode(code) || !isOneTimeToken(state)) return fail()
+      const stateHash = await sha256Hex(state)
+      const stateRow = await env.DB.prepare('SELECT * FROM oauth_states WHERE state_hash = ?').bind(stateHash).first()
+      await env.DB.prepare('DELETE FROM oauth_states WHERE state_hash = ?').bind(stateHash).run()
+      if (!stateRow || stateRow.provider !== provider || new Date(stateRow.expires_at).getTime() <= Date.now()) return fail()
+      const cfg = oauthConfig(provider, env)
+      if (!cfg) return fail()
+      const idToken = await exchangeCode(cfg, code, stateRow.code_verifier)
+      if (!idToken) return fail()
+      const identity = await verifyIdToken(cfg, idToken)
+      if (!identity) {
+        await audit(env.DB, '', 'oauth_login_failed', ipH, false, provider)
+        return fail()
+      }
+      if (!(await checkRateD1Account(env.DB, 'oauthCallback', await sha256Hex(identity.email)))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      let user = null
+      const linked = await env.DB.prepare('SELECT * FROM oauth_identities WHERE provider = ? AND provider_user_id = ?').bind(provider, identity.sub).first()
+      if (linked) user = await getUserById(env.DB, linked.user_id)
+      if (!user) user = await getUserByEmail(env.DB, identity.email)
+      if (user && !linked) {
+        try {
+          await env.DB.prepare('INSERT INTO oauth_identities (id, user_id, provider, provider_user_id, email_normalized, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .bind(randomToken(16), user.id, provider, identity.sub, identity.email, nowIso(), nowIso()).run()
+        } catch { /* identity linked concurrently; proceed */ }
+      }
+      if (!user) {
+        const userId = randomToken(16)
+        const unusable = await hashPassword(randomToken(32), iterations(env))
+        try {
+          await env.DB.batch([
+            env.DB.prepare('INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+              .bind(userId, identity.email, identity.email, unusable, 'pending_mfa', 1, 0, nowIso(), nowIso()),
+            env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
+              .bind(userId, 'free', 'active', nowIso()),
+            env.DB.prepare('INSERT INTO oauth_identities (id, user_id, provider, provider_user_id, email_normalized, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+              .bind(randomToken(16), userId, provider, identity.sub, identity.email, nowIso(), nowIso()),
+          ])
+        } catch (err) {
+          const msg = String(err && err.message ? err.message : '')
+          if (/UNIQUE constraint/i.test(msg)) {
+            user = await getUserByEmail(env.DB, identity.email)
+            if (!user) return fail()
+          } else throw err
+        }
+        if (!user) user = await getUserById(env.DB, userId)
+        if (!user) return fail()
+      }
+      if (user.status === 'suspended') {
+        await audit(env.DB, user.id, 'oauth_login_failed', ipH, false, provider)
+        return fail()
+      }
+      const nextSuffix = stateRow.return_url ? '?next=' + encodeURIComponent(stateRow.return_url) : ''
+      if (user.status === 'pending_mfa') {
+        const handoff = await createHandoff(env.DB, user.id, 'setup')
+        await audit(env.DB, user.id, 'oauth_login', ipH, true, provider)
+        return oauthRedirect(env, request, OAUTH_REDIRECT_BASE + '/mfa-setup/' + nextSuffix, { 'Set-Cookie': handoffCookie(handoff, env) })
+      }
+      if (user.mfa_enabled === 1) {
+        const handoff = await createHandoff(env.DB, user.id, 'challenge')
+        await audit(env.DB, user.id, 'oauth_login', ipH, true, provider)
+        return oauthRedirect(env, request, OAUTH_REDIRECT_BASE + '/login/code/' + nextSuffix, { 'Set-Cookie': handoffCookie(handoff, env) })
+      }
+      const session = await createSession(env.DB, user.id, userAgent, ipH)
+      await audit(env.DB, user.id, 'oauth_login', ipH, true, provider)
+      const dest = stateRow.return_url || OAUTH_REDIRECT_BASE + '/dashboard/'
+      return oauthRedirect(env, request, dest, { 'Set-Cookie': sessionCookie(session.token, env) })
+    }
+
+    // ---- OAuth: handoff (exchange the post-callback cookie for a one-time token) ----
+    if (method === 'POST' && path === '/auth/oauth/handoff') {
+      if (!(await checkRateD1(env.DB, request, 'oauthHandoff'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const token = parseCookie(request).kluzar_oauth_handoff
+      if (!isOneTimeToken(token)) return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
+      const hash = await sha256Hex(token)
+      const row = await env.DB.prepare('SELECT * FROM oauth_handoffs WHERE token_hash = ?').bind(hash).first()
+      await env.DB.prepare('DELETE FROM oauth_handoffs WHERE token_hash = ?').bind(hash).run()
+      if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+        return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
+      }
+      const user = await getUserById(env.DB, row.user_id)
+      if (!user || user.status === 'suspended') {
+        return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
+      }
+      if (row.kind === 'setup') {
+        if (user.status !== 'pending_mfa') return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
+        const setupToken = await createOneTimeToken(env.DB, 'setup_tokens', user.id, 30)
+        return jsonResponse(env, request, 200, { ok: true, setupToken }, { 'Set-Cookie': clearHandoffCookie(env) })
+      }
+      if (row.kind === 'challenge') {
+        if (user.status !== 'active' || user.mfa_enabled !== 1) return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
+        const challengeToken = await createOneTimeToken(env.DB, 'login_challenges', user.id, 10)
+        return jsonResponse(env, request, 200, { ok: true, challengeToken }, { 'Set-Cookie': clearHandoffCookie(env) })
+      }
+      return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
     }
 
     // ---- MFA setup (pending via setupToken, or re-setup via session) ----
