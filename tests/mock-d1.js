@@ -10,6 +10,9 @@ const UNIQUE = {
   recovery_codes: ['code_hash'],
   recovery_transactions: ['token_hash'],
   email_verifications: [['user_id', 'purpose']],
+  oauth_identities: [['provider', 'provider_user_id'], ['user_id', 'provider']],
+  oauth_states: ['state_hash'],
+  oauth_handoffs: ['token_hash'],
 }
 export class MockD1 {
   constructor() {
@@ -18,6 +21,7 @@ export class MockD1 {
       setup_tokens: [], login_challenges: [], recovery_codes: [],
       recovery_transactions: [], entitlements: [], audit_events: [],
       rate_limits: [], email_verifications: [],
+      oauth_identities: [], oauth_states: [], oauth_handoffs: [],
     }
   }
   snapshot() { return JSON.parse(JSON.stringify(this.tables)) }

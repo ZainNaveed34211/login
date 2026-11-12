@@ -86,6 +86,14 @@
   // (post-login go() honours next), while users who already have a
   // session go straight to their dashboard through this helper.
   const goDashboard = () => { window.location.href = '/dashboard/' }
+  function setupOAuthButtons() {
+    const next = validReturnTarget()
+    const suffix = next ? '?next=' + encodeURIComponent(next) : ''
+    const g = $('oauth-google')
+    if (g) g.href = API + '/auth/google' + suffix
+    const m = $('oauth-microsoft')
+    if (m) m.href = API + '/auth/microsoft' + suffix
+  }
   function showError(msg) {
     const el = $('global-error')
     if (!el) { alert(msg); return }
@@ -263,6 +271,8 @@
     if (!['dashboard', 'profile', 'password-change', 'authenticator', 'sessions', 'recovery-regenerate'].includes(page)) renderChrome(false)
 
     if (page === 'login-email') {
+      setupOAuthButtons()
+      if (new URLSearchParams(window.location.search).get('oauth') === 'error') showError('Sign-in with Google or Microsoft failed. Please try again or use your email and password.')
       $('form-email').addEventListener('submit', (e) => {
         e.preventDefault()
         const email0 = $('email-input').value.trim()
@@ -311,6 +321,7 @@
 
     if (page === 'signup') {
       if (await redirectIfAuthed()) return
+      setupOAuthButtons()
       $('back-to-login').addEventListener('click', () => go('/login/'))
       $('form-signup').addEventListener('submit', async (e) => {
         e.preventDefault()
@@ -382,7 +393,13 @@
     }
 
     if (page === 'mfa-setup') {
-      const setupToken = S.getItem('kluzar_setup_token')
+      let setupToken = S.getItem('kluzar_setup_token')
+      if (!setupToken) {
+        try {
+          const h = await api('/auth/oauth/handoff', { method: 'POST', body: JSON.stringify({}) })
+          if (h.setupToken) { setupToken = h.setupToken; S.setItem('kluzar_setup_token', setupToken) }
+        } catch { /* no handoff: fall through to session mode */ }
+      }
       const sessionMode = !setupToken
       async function renderSetup(data) {
         $('manual-key').textContent = data.manualKey
@@ -452,7 +469,13 @@
 
     if (page === 'mfa-verify') {
       if (await redirectIfAuthed()) return
-      const challengeToken = S.getItem('kluzar_challenge_token')
+      let challengeToken = S.getItem('kluzar_challenge_token')
+      if (!challengeToken) {
+        try {
+          const h = await api('/auth/oauth/handoff', { method: 'POST', body: JSON.stringify({}) })
+          if (h.challengeToken) { challengeToken = h.challengeToken; S.setItem('kluzar_challenge_token', challengeToken) }
+        } catch { /* no handoff: fall through to the login redirect below */ }
+      }
       if (!challengeToken) { go('/login/'); return }
       let emailMode = false
       let resendTimer = null
