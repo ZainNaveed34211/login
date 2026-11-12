@@ -114,6 +114,10 @@ export function resetRateLimits() {
 export const RATE_LIMITS = {
   register: { limit: 5, windowMs: 15 * 60 * 1000 },
   login: { limit: 10, windowMs: 15 * 60 * 1000 },
+  verificationSend: { limit: 5, windowMs: 15 * 60 * 1000 },
+  verificationVerify: { limit: 10, windowMs: 15 * 60 * 1000 },
+  loginEmailSend: { limit: 5, windowMs: 15 * 60 * 1000 },
+  loginEmailVerify: { limit: 10, windowMs: 15 * 60 * 1000 },
   manageAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
   businessAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },
   dashAssertion: { limit: 20, windowMs: 10 * 60 * 1000 },

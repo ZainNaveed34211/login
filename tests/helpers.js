@@ -42,10 +42,42 @@ export function advanceTotp(env) {
     for (const row of env.DB.tables.mfa_secrets) row.last_used_step = null
   }
 }
+export function stubBrevo() {
+  const sent = []
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    sent.push({ url, options })
+    return { ok: true, status: 201, json: async () => ({ messageId: 'test-message-id' }) }
+  }
+  return { sent, restore() { globalThis.fetch = origFetch } }
+}
+export function lastBrevoCode(sent) {
+  const last = sent[sent.length - 1]
+  const body = JSON.parse(last.options.body)
+  const text = body.textContent || ''
+  const m = text.match(/(\d{6})/)
+  return m ? m[1] : null
+}
+export async function verifyEmail(env, email, ip = '10.0.0.9') {
+  env.BREVO_API_KEY = 'test-brevo-key'
+  const stub = stubBrevo()
+  try {
+    const send = await call(env, '/auth/verification/send', 'POST', { email }, { ip })
+    if (send.status !== 200) throw new Error('verification send failed: ' + JSON.stringify(send.data))
+    const code = lastBrevoCode(stub.sent)
+    if (!code) throw new Error('no code captured from Brevo stub')
+    const verify = await call(env, '/auth/verification/verify', 'POST', { email, code }, { ip })
+    if (verify.status !== 200) throw new Error('verification verify failed: ' + JSON.stringify(verify.data))
+    return verify.data
+  } finally {
+    stub.restore()
+  }
+}
 export async function registerAndActivate(env, email, password) {
   resetRateLimits()
   const reg = await call(env, '/auth/register', 'POST', { email, password }, { ip: '10.0.0.1' })
   if (reg.status !== 201) throw new Error('register failed: ' + JSON.stringify(reg.data))
+  await verifyEmail(env, email)
   const setup = await call(env, '/auth/mfa/setup', 'POST', { setupToken: reg.data.setupToken }, { ip: '10.0.0.1' })
   if (setup.status !== 200) throw new Error('setup failed: ' + JSON.stringify(setup.data))
   const secret = secretFromOtpauth(setup.data.otpauthUrl)

@@ -53,6 +53,7 @@ import {
   publicUser,
 } from './security.js'
 import { clampPbkdf2Iterations } from './crypto.js'
+import { sendSignInEmail, sendVerificationEmail } from './email.js'
 
 function iterations(env) {
   // Workers Free native WebCrypto rejects PBKDF2 iteration counts above
@@ -81,6 +82,11 @@ function parseCookie(request) {
     if (k) out[k] = v.join('=')
   }
   return out
+}
+function verificationCode() {
+  const bytes = randomBytes(4)
+  const value = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0
+  return String(value % 1000000).padStart(6, '0')
 }
 async function getSession(request, env) {
   const token = parseCookie(request).kluzar_session
@@ -478,6 +484,81 @@ export async function handleRequest(request, env) {
       return jsonResponse(env, request, 201, { ok: true, userId, email, status: 'pending_mfa', setupToken })
     }
 
+    // ---- Public: email verification (send code) ----
+    if (method === 'POST' && path === '/auth/verification/send') {
+      if (!(await checkRateD1(env.DB, request, 'verificationSend'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const email = typeof body.email === 'string' ? normalizeEmail(body.email) : ''
+      if (!isValidEmail(email)) {
+        return jsonResponse(env, request, 200, { ok: true, message: 'If an account exists with this email, a verification code has been sent.', resendAfter: 60 })
+      }
+      const user = await getUserByEmail(env.DB, email)
+      if (!user || user.status === 'suspended' || user.email_verified === 1) {
+        return jsonResponse(env, request, 200, { ok: true, message: 'If an account exists with this email, a verification code has been sent.', resendAfter: 60 })
+      }
+      if (!(await checkRateD1Account(env.DB, 'verificationSend', await sha256Hex(email)))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const existing = await env.DB.prepare('SELECT * FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'signup').first()
+      if (existing && Date.now() - new Date(existing.last_sent_at).getTime() < 60 * 1000) {
+        return jsonResponse(env, request, 200, { ok: true, message: 'If an account exists with this email, a verification code has been sent.', resendAfter: 60 })
+      }
+      const code = verificationCode()
+      const codeHash = await sha256Hex(code)
+      const now = nowIso()
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'signup'),
+        env.DB.prepare('INSERT INTO email_verifications (id, user_id, email_normalized, purpose, code_hash, attempts, verified, created_at, expires_at, last_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(randomToken(16), user.id, email, 'signup', codeHash, 0, 0, now, isoPlus(15 * 60 * 1000), now),
+      ])
+      const sent = await sendVerificationEmail(env, email, code)
+      if (!sent) {
+        await env.DB.prepare('DELETE FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'signup').run()
+        await audit(env.DB, user.id, 'verification_send_failed', ipH, false, '')
+        return errorResponse(env, request, 500, 'Something went wrong. Please try again.', 'INTERNAL')
+      }
+      await audit(env.DB, user.id, 'verification_send', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, message: 'If an account exists with this email, a verification code has been sent.', resendAfter: 60 })
+    }
+
+    // ---- Public: email verification (verify code) ----
+    if (method === 'POST' && path === '/auth/verification/verify') {
+      if (!(await checkRateD1(env.DB, request, 'verificationVerify'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const email = typeof body.email === 'string' ? normalizeEmail(body.email) : ''
+      const code = body.code
+      if (!isValidEmail(email) || !isCodeFormat(code)) {
+        return errorResponse(env, request, 400, 'Invalid or expired verification code.', 'INVALID_CODE')
+      }
+      const user = await getUserByEmail(env.DB, email)
+      if (!user || user.status === 'suspended') {
+        return errorResponse(env, request, 400, 'Invalid or expired verification code.', 'INVALID_CODE')
+      }
+      if (!(await checkRateD1Account(env.DB, 'verificationVerify', user.id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const row = await env.DB.prepare('SELECT * FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'signup').first()
+      if (!row || row.verified === 1 || new Date(row.expires_at).getTime() <= Date.now() || row.attempts >= 5) {
+        return errorResponse(env, request, 400, 'Invalid or expired verification code.', 'INVALID_CODE')
+      }
+      const codeHash = await sha256Hex(String(code))
+      let diff = codeHash.length !== row.code_hash.length ? 1 : 0
+      for (let i = 0; i < codeHash.length && i < row.code_hash.length; i++) diff |= codeHash.charCodeAt(i) ^ row.code_hash.charCodeAt(i)
+      if (diff !== 0) {
+        await env.DB.prepare('UPDATE email_verifications SET attempts = attempts + 1 WHERE user_id = ? AND purpose = ? AND attempts < 5').bind(user.id, 'signup').run()
+        return errorResponse(env, request, 400, 'Invalid or expired verification code.', 'INVALID_CODE')
+      }
+      const claimed = await env.DB.prepare('UPDATE email_verifications SET verified = 1 WHERE user_id = ? AND purpose = ? AND verified = 0 AND expires_at > ? AND attempts < 5').bind(user.id, 'signup', nowIso()).run()
+      if (changesOf(claimed) !== 1) {
+        return errorResponse(env, request, 400, 'Invalid or expired verification code.', 'INVALID_CODE')
+      }
+      await env.DB.prepare('UPDATE users SET email_verified = ?, updated_at = ? WHERE id = ?').bind(1, nowIso(), user.id).run()
+      await audit(env.DB, user.id, 'verification_verified', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, emailVerified: true })
+    }
+
     // ---- Public: login (password step) ----
     if (method === 'POST' && path === '/auth/login') {
       if (!(await checkRateD1(env.DB, request, 'login'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
@@ -533,6 +614,81 @@ export async function handleRequest(request, env) {
       return jsonResponse(env, request, 200, { ok: true, user: publicUser(user), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
     }
 
+    if (method === 'POST' && path === '/auth/mfa/email/send') {
+      if (!(await checkRateD1(env.DB, request, 'loginEmailSend'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const challenge = await peekOneTimeToken(env.DB, 'login_challenges', body.challengeToken)
+      if (!challenge) return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+      const user = await getUserById(env.DB, challenge.user_id)
+      if (!user || user.status !== 'active' || user.email_verified !== 1) {
+        return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+      }
+      if (!(await checkRateD1Account(env.DB, 'loginEmailSend', user.id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const existing = await env.DB.prepare('SELECT * FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'login').first()
+      if (existing && Date.now() - new Date(existing.last_sent_at).getTime() < 60 * 1000) {
+        return jsonResponse(env, request, 200, { ok: true, message: 'A sign-in code has been sent to your email.', resendAfter: 60 })
+      }
+      const code = verificationCode()
+      const codeHash = await sha256Hex(code)
+      const now = nowIso()
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'login'),
+        env.DB.prepare('INSERT INTO email_verifications (id, user_id, email_normalized, purpose, code_hash, attempts, verified, created_at, expires_at, last_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(randomToken(16), user.id, user.email_normalized, 'login', codeHash, 0, 0, now, isoPlus(15 * 60 * 1000), now),
+      ])
+      const sent = await sendSignInEmail(env, user.email, code)
+      if (!sent) {
+        await env.DB.prepare('DELETE FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'login').run()
+        await audit(env.DB, user.id, 'login_email_send_failed', ipH, false, '')
+        return errorResponse(env, request, 500, 'Something went wrong. Please try again.', 'INTERNAL')
+      }
+      await audit(env.DB, user.id, 'login_email_send', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, message: 'A sign-in code has been sent to your email.', resendAfter: 60 })
+    }
+
+    if (method === 'POST' && path === '/auth/mfa/email/verify') {
+      if (!(await checkRateD1(env.DB, request, 'loginEmailVerify'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const code = body.code
+      if (!isCodeFormat(code)) {
+        return errorResponse(env, request, 400, 'Invalid or expired sign-in code.', 'INVALID_CODE')
+      }
+      const challenge = await peekOneTimeToken(env.DB, 'login_challenges', body.challengeToken)
+      if (!challenge) return errorResponse(env, request, 400, 'Invalid or expired sign-in code.', 'INVALID_CODE')
+      const user = await getUserById(env.DB, challenge.user_id)
+      if (!user || user.status !== 'active' || user.email_verified !== 1) {
+        return errorResponse(env, request, 400, 'Invalid or expired sign-in code.', 'INVALID_CODE')
+      }
+      if (!(await checkRateD1Account(env.DB, 'loginEmailVerify', user.id))) {
+        return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      }
+      const row = await env.DB.prepare('SELECT * FROM email_verifications WHERE user_id = ? AND purpose = ?').bind(user.id, 'login').first()
+      if (!row || row.verified === 1 || new Date(row.expires_at).getTime() <= Date.now() || row.attempts >= 5) {
+        return errorResponse(env, request, 400, 'Invalid or expired sign-in code.', 'INVALID_CODE')
+      }
+      const codeHash = await sha256Hex(String(code))
+      let diff = codeHash.length !== row.code_hash.length ? 1 : 0
+      for (let i = 0; i < codeHash.length && i < row.code_hash.length; i++) diff |= codeHash.charCodeAt(i) ^ row.code_hash.charCodeAt(i)
+      if (diff !== 0) {
+        await env.DB.prepare('UPDATE email_verifications SET attempts = attempts + 1 WHERE user_id = ? AND purpose = ? AND attempts < 5').bind(user.id, 'login').run()
+        return errorResponse(env, request, 400, 'Invalid or expired sign-in code.', 'INVALID_CODE')
+      }
+      const claimed = await env.DB.prepare('UPDATE email_verifications SET verified = 1 WHERE user_id = ? AND purpose = ? AND verified = 0 AND expires_at > ? AND attempts < 5').bind(user.id, 'login', nowIso()).run()
+      if (changesOf(claimed) !== 1) {
+        return errorResponse(env, request, 400, 'Invalid or expired sign-in code.', 'INVALID_CODE')
+      }
+      if (!(await consumeOneTimeToken(env.DB, 'login_challenges', body.challengeToken, challenge))) {
+        return errorResponse(env, request, 400, 'Login session expired. Please log in again.', 'INVALID_CHALLENGE')
+      }
+      const session = await createSession(env.DB, user.id, userAgent, ipH)
+      await audit(env.DB, user.id, 'login', ipH, true, 'email')
+      return jsonResponse(env, request, 200, { ok: true, user: publicUser(user), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
+    }
+
     // ---- MFA setup (pending via setupToken, or re-setup via session) ----
     if (method === 'POST' && path === '/auth/mfa/setup') {
       if (!(await checkRateD1(env.DB, request, 'mfaSetup'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
@@ -568,6 +724,7 @@ export async function handleRequest(request, env) {
         user = session.user
       }
       if (!user) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      if (setupRow && user.email_verified !== 1) return errorResponse(env, request, 400, 'Please verify your email first.', 'EMAIL_NOT_VERIFIED')
       const secretBytes = randomBytes(20)
       const manualKey = base32Encode(secretBytes).replace(/=+$/, '')
       const encrypted = await encryptSecret(env, secretBytes)
@@ -597,6 +754,8 @@ export async function handleRequest(request, env) {
         if (!(await checkRateD1Account(env.DB, 'mfaVerify', setupRow.user_id))) {
           return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
         }
+        const verifyUser = await getUserById(env.DB, setupRow.user_id)
+        if (!verifyUser || verifyUser.email_verified !== 1) return errorResponse(env, request, 400, 'Please verify your email first.', 'EMAIL_NOT_VERIFIED')
         const pending = await env.DB.prepare('SELECT * FROM pending_mfa_secrets WHERE user_id = ?').bind(setupRow.user_id).first()
         if (!pending || new Date(pending.expires_at).getTime() <= Date.now() || !isCodeFormat(code)) {
           return errorResponse(env, request, 400, 'Invalid authenticator code.', 'INVALID_CODE')

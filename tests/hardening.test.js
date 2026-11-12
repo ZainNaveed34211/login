@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MockD1, testEnv } from './mock-d1.js'
-import { call, registerAndActivate, loginWithMfa, totpNow, advanceTotp, secretFromOtpauth } from './helpers.js'
+import { call, registerAndActivate, loginWithMfa, totpNow, advanceTotp, secretFromOtpauth, verifyEmail } from './helpers.js'
 import { resetRateLimits, readJson } from '../worker/src/security.js'
 import { verifyPassword, hashPassword, parsePbkdf2Hash, clampPbkdf2Iterations } from '../worker/src/crypto.js'
 
@@ -71,6 +71,7 @@ test('setup token cannot be reused after a successful activation', async () => {
   const { db, env } = fresh()
   resetRateLimits()
   const reg = await call(env, '/auth/register', 'POST', { email: 'setup-reuse@example.com', password: PW }, { ip: '10.4.3.1' })
+  await verifyEmail(env, 'setup-reuse@example.com')
   const setup = await call(env, '/auth/mfa/setup', 'POST', { setupToken: reg.data.setupToken }, { ip: '10.4.3.1' })
   const secret = secretFromOtpauth(setup.data.otpauthUrl)
   const code = await totpNow(secret)

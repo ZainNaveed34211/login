@@ -9,6 +9,7 @@ const UNIQUE = {
   login_challenges: ['token_hash'],
   recovery_codes: ['code_hash'],
   recovery_transactions: ['token_hash'],
+  email_verifications: [['user_id', 'purpose']],
 }
 export class MockD1 {
   constructor() {
@@ -16,7 +17,7 @@ export class MockD1 {
       users: [], sessions: [], mfa_secrets: [], pending_mfa_secrets: [],
       setup_tokens: [], login_challenges: [], recovery_codes: [],
       recovery_transactions: [], entitlements: [], audit_events: [],
-      rate_limits: [],
+      rate_limits: [], email_verifications: [],
     }
   }
   snapshot() { return JSON.parse(JSON.stringify(this.tables)) }
@@ -174,7 +175,8 @@ export class MockD1 {
         }
       }
       for (const u of UNIQUE[table] || []) {
-        if ((this.tables[table] || []).some((r) => r[u] === row[u])) throw new Error('UNIQUE constraint failed: ' + u)
+        const cols = Array.isArray(u) ? u : [u]
+        if ((this.tables[table] || []).some((r) => cols.every((c) => r[c] === row[c]))) throw new Error('UNIQUE constraint failed: ' + cols.join(','))
       }
       this.tables[table].push(row)
       return 1
