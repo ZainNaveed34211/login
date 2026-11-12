@@ -323,6 +323,59 @@
           const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
           S.setItem('kluzar_email', email)
           S.setItem('kluzar_setup_token', data.setupToken)
+          try {
+            await api('/auth/verification/send', { method: 'POST', body: JSON.stringify({ email }) })
+            S.setItem('kluzar_code_sent_at', String(Date.now()))
+          } catch (err) {
+            S.setItem('kluzar_notice', 'Your account was created, but the verification code could not be sent. Please use Resend code below.')
+          }
+          go('/signup/verify/')
+        } catch (err) { showError(err.message) }
+      })
+    }
+
+    if (page === 'signup-verify') {
+      if (await redirectIfAuthed()) return
+      const storedEmail = S.getItem('kluzar_email') || ''
+      if (storedEmail) $('verify-email').value = storedEmail
+      let resendTimer = null
+      function startResendCooldown(seconds) {
+        const btn = $('resend-code')
+        if (!btn) return
+        btn.disabled = true
+        let left = seconds
+        btn.textContent = 'Resend code (' + left + 's)'
+        clearInterval(resendTimer)
+        resendTimer = setInterval(() => {
+          left -= 1
+          if (left <= 0) { clearInterval(resendTimer); btn.disabled = false; btn.textContent = 'Resend code'; return }
+          btn.textContent = 'Resend code (' + left + 's)'
+        }, 1000)
+      }
+      const sentAt = parseInt(S.getItem('kluzar_code_sent_at') || '0', 10) || 0
+      const remaining = 60 - Math.floor((Date.now() - sentAt) / 1000)
+      if (sentAt && remaining > 0) startResendCooldown(remaining)
+      $('back-to-signup').addEventListener('click', () => go('/signup/'))
+      $('resend-code').addEventListener('click', async () => {
+        const email = $('verify-email').value.trim()
+        if (!isEmailFormat(email)) { showError('Please enter a valid email address.'); return }
+        try {
+          await api('/auth/verification/send', { method: 'POST', body: JSON.stringify({ email }) })
+          S.setItem('kluzar_email', email)
+          S.setItem('kluzar_code_sent_at', String(Date.now()))
+          showInfo('If an account exists with this email, a new code has been sent.')
+          startResendCooldown(60)
+        } catch (err) { showError(err.message) }
+      })
+      $('form-verify').addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const email = $('verify-email').value.trim()
+        const code = $('verify-code').value.trim()
+        if (!isEmailFormat(email)) { showError('Please enter a valid email address.'); return }
+        if (!isCodeFormat(code)) { showError('Enter the 6-digit verification code.'); return }
+        try {
+          await api('/auth/verification/verify', { method: 'POST', body: JSON.stringify({ email, code }) })
+          S.setItem('kluzar_email', email)
           go('/mfa-setup/')
         } catch (err) { showError(err.message) }
       })
@@ -359,7 +412,14 @@
           const data = await api('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ setupToken }) })
           if (data.setupToken) S.setItem('kluzar_setup_token', data.setupToken)
           await renderSetup(data)
-        } catch (err) { showError(err.message) }
+        } catch (err) {
+          if (err && err.data && err.data.code === 'EMAIL_NOT_VERIFIED') {
+            S.setItem('kluzar_notice', 'Please verify your email first. We sent a 6-digit code to your email address.')
+            go('/signup/verify/')
+            return
+          }
+          showError(err.message)
+        }
       }
       $('form-mfa-setup').addEventListener('submit', async (e) => {
         e.preventDefault()
@@ -379,7 +439,14 @@
           S.removeItem('kluzar_setup_token')
           if (data.recoveryCodes) S.setItem('kluzar_recovery_codes', JSON.stringify(data.recoveryCodes))
           go('/recovery-codes/')
-        } catch (err) { showError(err.message) }
+        } catch (err) {
+          if (err && err.data && err.data.code === 'EMAIL_NOT_VERIFIED') {
+            S.setItem('kluzar_notice', 'Please verify your email first. We sent a 6-digit code to your email address.')
+            go('/signup/verify/')
+            return
+          }
+          showError(err.message)
+        }
       })
     }
 
@@ -387,11 +454,50 @@
       if (await redirectIfAuthed()) return
       const challengeToken = S.getItem('kluzar_challenge_token')
       if (!challengeToken) { go('/login/'); return }
+      let emailMode = false
+      let resendTimer = null
+      function startResendCooldown(seconds) {
+        const btn = $('resend-email-code')
+        if (!btn) return
+        btn.disabled = true
+        let left = seconds
+        btn.textContent = 'Resend code (' + left + 's)'
+        clearInterval(resendTimer)
+        resendTimer = setInterval(() => {
+          left -= 1
+          if (left <= 0) { clearInterval(resendTimer); btn.disabled = false; btn.textContent = 'Resend code'; return }
+          btn.textContent = 'Resend code (' + left + 's)'
+        }, 1000)
+      }
+      async function sendEmailCode() {
+        await api('/auth/mfa/email/send', { method: 'POST', body: JSON.stringify({ challengeToken }) })
+        emailMode = true
+        showInfo('We sent a 6-digit sign-in code to your email. Enter it below. If you cannot find it, check your spam folder. Gmail users: also check the Promotions tab.')
+        $('send-email-code-row').classList.add('hidden')
+        $('email-code-actions').classList.remove('hidden')
+        startResendCooldown(60)
+      }
+      $('send-email-code').addEventListener('click', async () => {
+        try { await sendEmailCode() } catch (err) { showError(err.message) }
+      })
+      $('resend-email-code').addEventListener('click', async () => {
+        try { await sendEmailCode() } catch (err) { showError(err.message) }
+      })
+      $('use-authenticator').addEventListener('click', () => {
+        emailMode = false
+        clearInterval(resendTimer)
+        $('send-email-code-row').classList.remove('hidden')
+        $('email-code-actions').classList.add('hidden')
+      })
       $('form-mfa-verify').addEventListener('submit', async (e) => {
         e.preventDefault()
         if (!isCodeFormat($('mfa-code').value)) { showError('Enter the 6-digit authenticator code.'); return }
         try {
-          await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })
+          if (emailMode) {
+            await api('/auth/mfa/email/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })
+          } else {
+            await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })
+          }
           S.removeItem('kluzar_challenge_token')
           go('/dashboard/')
         } catch (err) { showError(err.message) }
