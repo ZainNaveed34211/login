@@ -309,7 +309,7 @@ function checkOneTimeTable(table) {
   // and must fail rather than build a query from an unknown name.
   if (!ONE_TIME_TABLES.has(table)) throw new Error('Invalid token table')
 }
-async function createOneTimeToken(db, table, userId, minutes) {
+async function createOneTimeToken(db, table, userId, minutes, source = 'password') {
   checkOneTimeTable(table)
   const token = randomToken(32)
   const hash = await sha256Hex(token)
@@ -317,10 +317,14 @@ async function createOneTimeToken(db, table, userId, minutes) {
   // leave the user with no valid token while the caller thinks one
   // was issued, and a concurrent create cannot interleave between
   // the delete and the insert.
+  const insert = table === 'setup_tokens'
+    ? db.prepare(`INSERT INTO ${table} (id, user_id, token_hash, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .bind(randomToken(16), userId, hash, source, nowIso(), isoPlus(minutes * 60 * 1000))
+    : db.prepare(`INSERT INTO ${table} (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`)
+        .bind(randomToken(16), userId, hash, nowIso(), isoPlus(minutes * 60 * 1000))
   await db.batch([
     db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId),
-    db.prepare(`INSERT INTO ${table} (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`)
-      .bind(randomToken(16), userId, hash, nowIso(), isoPlus(minutes * 60 * 1000)),
+    insert,
   ])
   return token
 }
@@ -504,13 +508,13 @@ export async function handleRequest(request, env) {
       try {
         await env.DB.batch([
           env.DB.prepare(
-            'INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          ).bind(userId, email, email, passwordHash, 'pending_mfa', 0, 0, nowIso(), nowIso()),
+            'INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          ).bind(userId, email, email, passwordHash, 'pending_mfa', 0, 0, 1, nowIso(), nowIso()),
           env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
             .bind(userId, 'free', 'active', nowIso()),
           env.DB.prepare('DELETE FROM setup_tokens WHERE user_id = ?').bind(userId),
-          env.DB.prepare('INSERT INTO setup_tokens (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
-            .bind(randomToken(16), userId, setupHash, nowIso(), isoPlus(30 * 60 * 1000)),
+          env.DB.prepare('INSERT INTO setup_tokens (id, user_id, token_hash, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(randomToken(16), userId, setupHash, 'password', nowIso(), isoPlus(30 * 60 * 1000)),
         ])
       } catch (err) {
         const msg = String(err && err.message ? err.message : '')
@@ -788,8 +792,8 @@ export async function handleRequest(request, env) {
         const unusable = await hashPassword(randomToken(32), iterations(env))
         try {
           await env.DB.batch([
-            env.DB.prepare('INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-              .bind(userId, identity.email, identity.email, unusable, 'pending_mfa', 1, 0, nowIso(), nowIso()),
+            env.DB.prepare('INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+              .bind(userId, identity.email, identity.email, unusable, 'pending_mfa', 1, 0, 0, nowIso(), nowIso()),
             env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
               .bind(userId, 'free', 'active', nowIso()),
             env.DB.prepare('INSERT INTO oauth_identities (id, user_id, provider, provider_user_id, email_normalized, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -844,8 +848,8 @@ export async function handleRequest(request, env) {
       }
       if (row.kind === 'setup') {
         if (user.status !== 'pending_mfa') return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
-        const setupToken = await createOneTimeToken(env.DB, 'setup_tokens', user.id, 30)
-        return jsonResponse(env, request, 200, { ok: true, setupToken }, { 'Set-Cookie': clearHandoffCookie(env) })
+        const setupToken = await createOneTimeToken(env.DB, 'setup_tokens', user.id, 30, 'oauth')
+        return jsonResponse(env, request, 200, { ok: true, setupToken, source: 'oauth' }, { 'Set-Cookie': clearHandoffCookie(env) })
       }
       if (row.kind === 'challenge') {
         if (user.status !== 'active' || user.mfa_enabled !== 1) return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
@@ -853,6 +857,31 @@ export async function handleRequest(request, env) {
         return jsonResponse(env, request, 200, { ok: true, challengeToken }, { 'Set-Cookie': clearHandoffCookie(env) })
       }
       return errorResponse(env, request, 400, 'Sign-in session expired. Please sign in again.', 'INVALID_HANDOFF')
+    }
+
+    if (method === 'POST' && path === '/auth/mfa/defer') {
+      if (!(await checkRateD1(env.DB, request, 'oauthMfaDefer'))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (!originOk(env, request)) return errorResponse(env, request, 403, 'Request not allowed.', 'FORBIDDEN')
+      const body = await readJson(request)
+      const setupRow = await peekOneTimeToken(env.DB, 'setup_tokens', body.setupToken)
+      if (!setupRow) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      if (!(await checkRateD1Account(env.DB, 'oauthMfaDefer', setupRow.user_id))) return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
+      if (setupRow.source !== 'oauth') return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      const user = await getUserById(env.DB, setupRow.user_id)
+      if (!user || user.status !== 'pending_mfa' || user.email_verified !== 1) {
+        return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      }
+      if (!(await consumeOneTimeToken(env.DB, 'setup_tokens', body.setupToken, setupRow))) {
+        return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      }
+      const activated = await env.DB.prepare('UPDATE users SET status = ?, mfa_enabled = ?, updated_at = ? WHERE id = ? AND status = ?')
+        .bind('active', 0, nowIso(), user.id, 'pending_mfa').run()
+      if (changesOf(activated) !== 1) return errorResponse(env, request, 400, 'Setup session expired. Please log in again.', 'INVALID_SETUP')
+      await env.DB.prepare('DELETE FROM pending_mfa_secrets WHERE user_id = ?').bind(user.id).run()
+      const freshUser = await getUserById(env.DB, user.id)
+      const session = await createSession(env.DB, user.id, userAgent, ipH)
+      await audit(env.DB, user.id, 'oauth_mfa_deferred', ipH, true, '')
+      return jsonResponse(env, request, 200, { ok: true, user: publicUser(freshUser), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
     }
 
     // ---- MFA setup (pending via setupToken, or re-setup via session) ----
@@ -884,8 +913,13 @@ export async function handleRequest(request, env) {
         if (!(await checkRateD1Account(env.DB, 'mfaSetup', session.user.id))) {
           return errorResponse(env, request, 429, 'Too many attempts. Please try again later.', 'RATE_LIMITED')
         }
-        if (typeof body.currentPassword !== 'string' || !(await verifyPassword(body.currentPassword, session.user.password_hash))) {
-          return errorResponse(env, request, 401, 'Current password is incorrect.', 'INVALID_CREDENTIALS')
+        if (session.user.password_set !== 0) {
+          if (typeof body.currentPassword !== 'string' || body.currentPassword === '') {
+            return errorResponse(env, request, 401, 'Please enter your current password to continue.', 'PASSWORD_REQUIRED')
+          }
+          if (!(await verifyPassword(body.currentPassword, session.user.password_hash))) {
+            return errorResponse(env, request, 401, 'Current password is incorrect.', 'INVALID_CREDENTIALS')
+          }
         }
         user = session.user
       }

@@ -15,10 +15,10 @@
 <div id="global-error" class="alert error hidden" role="alert"></div>
 <div id="global-info" class="alert info hidden" role="status"></div>
 <section class="view card">
-<h1>Enter your authenticator code</h1>
-<p class="lead">Enter the 6-digit code from your authenticator app. If you lost access to the app, use one of your recovery codes instead.</p>
+<h1 id="mfa-verify-title">Enter your authenticator code</h1>
+<p class="lead" id="mfa-verify-lead">Enter the 6-digit code from your authenticator app. If you lost access to the app, use one of your recovery codes instead.</p>
 <form id="form-mfa-verify">
-<label for="mfa-code">Authenticator code or recovery code</label>
+<label id="mfa-code-label" for="mfa-code">Authenticator code or recovery code</label>
 <input id="mfa-code" class="code-input" type="text" autocomplete="one-time-code" required placeholder="123456 or XXXX-XXXX-XXXX-XXXX" />
 <button type="submit" class="btn-primary">Verify and sign in</button>
 </form>

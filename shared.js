@@ -204,33 +204,88 @@
     a.click()
     URL.revokeObjectURL(a.href)
   }
-  function renderEntitlement(ent) {
-    setHidden('entitlement-loading', true)
-    if (!ent) {
-      setHidden('entitlement-error', false)
-      setHidden('entitlement-content', true)
-      return
+  const PLAN_INFO = {
+    free: { label: 'Free Plan', short: 'Free', note: 'You are on the free plan. Get Premium to unlock more powerful features.', upgrade: 'Upgrade to Premium →', benefits: ['Limited SEO', 'Basic Website Security', 'Limited Reputation Analysis'] },
+    growth: { label: 'Growth Plan', short: 'Growth', note: 'You have Growth. Upgrade to Max for uptime monitoring, unlimited accessibility checks and unlimited website changes.', upgrade: 'Upgrade to Max →', benefits: ['Unlimited SEO', 'Unlimited Website Security', 'Company Management Dashboard'] },
+    max: { label: 'Max Plan', short: 'Max', note: 'You have the Max plan — the full power of Kluzar services.', upgrade: null, benefits: ['Uptime Monitoring', 'Unlimited Accessibility Checker', 'Unlimited Performance Monitor'] },
+  }
+  function renderPlanBanner(ent) {
+    const plan = (ent && ent.plan) || 'free'
+    const info = PLAN_INFO[plan] || PLAN_INFO.free
+    setText('plan-name', info.label)
+    setText('plan-note', info.note)
+    setText('plan-benefits-name', info.short)
+    const list = $('plan-benefits-list')
+    if (list) {
+      list.innerHTML = ''
+      info.benefits.forEach((b) => { const li = document.createElement('li'); li.textContent = b; list.appendChild(li) })
     }
-    setHidden('entitlement-error', true)
-    setHidden('entitlement-content', false)
-    setText('ent-plan', ent.plan)
-    setText('ent-status', ent.status)
-    setText('ent-note', ent.premium
-      ? 'You already have Premium access. Get Premium is hidden because your plan already grants it.'
-      : 'You are on the free plan. Get Premium to unlock deeper scans, premium findings and branded reports.')
     const btn = $('get-premium-btn')
-    // Show only when server-verified Free, hide when paid. Loading/error
-    // states above never assume Free or paid.
-    if (btn) { btn.classList.toggle('hidden', !!ent.premium); btn.href = PAYMENTS_URL }
+    if (btn) {
+      if (info.upgrade) { btn.classList.remove('hidden'); btn.textContent = info.upgrade; btn.href = PAYMENTS_URL }
+      else btn.classList.add('hidden')
+    }
+    setHidden('side-upgrade-card', plan === 'max')
+    setHidden('side-max-card', plan !== 'max')
+    const upsell = $('premium-upsell-card')
+    if (upsell) upsell.classList.toggle('hidden', !!(ent && ent.premium))
+  }
+  function setupDashSearch() {
+    const input = $('dash-search')
+    if (!input) return
+    function apply() {
+      const q = input.value.trim().toLowerCase()
+      let visible = 0
+      document.querySelectorAll('[data-search-card]').forEach((card) => {
+        const hit = !q || card.textContent.toLowerCase().includes(q)
+        card.classList.toggle('hidden', !hit)
+        if (hit) visible++
+      })
+      setHidden('search-empty', visible !== 0)
+    }
+    input.addEventListener('input', apply)
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); input.focus() }
+    })
+  }
+  async function loadLastLogin() {
+    try {
+      const data = await api('/account/sessions', { method: 'GET' })
+      const prev = (data.sessions || []).filter((s) => !s.current).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
+      if (prev && prev.created_at) setText('dash-last-login', 'Last login: ' + new Date(prev.created_at).toLocaleString())
+    } catch { /* nicety only: never blocks the dashboard */ }
   }
   async function loadDashboard() {
     const session = await requireSession()
     if (!session) return
-    setText('dash-email', session.user.email)
-    setText('dash-name', [session.user.firstName, session.user.lastName].filter(Boolean).join(' ') || '—')
-    setText('dash-phone', session.user.phone || '—')
-    setText('dash-mfa', session.user.mfaEnabled ? 'On' : 'Off')
-    renderEntitlement(session.entitlement)
+    const user = session.user
+    const firstName = (user.firstName || '').trim()
+    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ')
+    const email = user.email || ''
+    setText('dash-greeting', firstName ? 'Welcome back, ' + firstName + '!' : 'Welcome back!')
+    setText('side-name', fullName || email)
+    setText('side-email', email)
+    const initials = (fullName || email).trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
+    setText('side-avatar', initials || '?')
+    if (window.KLUZAR_LOGO_DARK_URL) { const l = $('side-logo'); if (l) l.src = window.KLUZAR_LOGO_DARK_URL }
+    let mfaBannerDismissed = false
+    function renderMfaBanner() {
+      const banner = $('mfa-banner')
+      if (banner) banner.classList.toggle('hidden', !!user.mfaEnabled || mfaBannerDismissed)
+    }
+    renderMfaBanner()
+    const closeBtn = $('mfa-banner-close')
+    if (closeBtn) closeBtn.addEventListener('click', () => { mfaBannerDismissed = true; renderMfaBanner() })
+    const pill = $('dash-secure-pill')
+    if (pill) {
+      pill.textContent = user.mfaEnabled ? 'Account Secure' : 'MFA not set up'
+      pill.classList.toggle('pill-warn', !user.mfaEnabled)
+    }
+    renderPlanBanner(session.entitlement)
+    setupDashSearch()
+    loadLastLogin()
+    const sideLogout = $('side-logout')
+    if (sideLogout) sideLogout.addEventListener('click', logout)
     const logoutAll = $('dash-logout-all')
     if (logoutAll) logoutAll.addEventListener('click', async () => {
       try {
@@ -239,8 +294,6 @@
       S.clear()
       go('/login/')
     })
-    const retry = $('entitlement-retry')
-    if (retry) retry.addEventListener('click', () => window.location.reload())
   }
   // Password visibility toggles: every page marks its password inputs with
   // a small eye button (class pw-toggle, data-for = input id). Toggling only
@@ -300,7 +353,7 @@
           const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password: $('password-input').value }) })
           S.setItem('kluzar_password_failures', '0')
           S.removeItem('kluzar_email')
-          if (data.setupRequired) { S.setItem('kluzar_setup_token', data.setupToken); go('/mfa-setup/'); return }
+          if (data.setupRequired) { S.setItem('kluzar_setup_token', data.setupToken); S.setItem('kluzar_setup_oauth', '0'); go('/mfa-setup/'); return }
           if (data.mfaRequired) { S.setItem('kluzar_challenge_token', data.challengeToken); go('/login/code/'); return }
           go('/dashboard/')
         } catch (err) {
@@ -334,6 +387,7 @@
           const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
           S.setItem('kluzar_email', email)
           S.setItem('kluzar_setup_token', data.setupToken)
+          S.setItem('kluzar_setup_oauth', '0')
           try {
             await api('/auth/verification/send', { method: 'POST', body: JSON.stringify({ email }) })
             S.setItem('kluzar_code_sent_at', String(Date.now()))
@@ -394,10 +448,16 @@
 
     if (page === 'mfa-setup') {
       let setupToken = S.getItem('kluzar_setup_token')
+      let oauthSetup = S.getItem('kluzar_setup_oauth') === '1'
       if (!setupToken) {
         try {
           const h = await api('/auth/oauth/handoff', { method: 'POST', body: JSON.stringify({}) })
-          if (h.setupToken) { setupToken = h.setupToken; S.setItem('kluzar_setup_token', setupToken) }
+          if (h.setupToken) {
+            setupToken = h.setupToken
+            S.setItem('kluzar_setup_token', setupToken)
+            oauthSetup = h.source === 'oauth'
+            S.setItem('kluzar_setup_oauth', oauthSetup ? '1' : '0')
+          }
         } catch { /* no handoff: fall through to session mode */ }
       }
       const sessionMode = !setupToken
@@ -409,22 +469,39 @@
         $('setup-qr-box').classList.remove('hidden')
       }
       if (sessionMode) {
-        // Authenticated re-setup: ask for the current password ON THIS
-        // PAGE (never stored, never passed through sessionStorage).
         const session = await requireSession()
         if (!session) return
-        $('setup-password-box').classList.remove('hidden')
         $('setup-qr-box').classList.add('hidden')
+        async function startSetup(currentPassword) {
+          const body = currentPassword === undefined ? {} : { currentPassword }
+          const data = await api('/auth/mfa/setup', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify(body) })
+          $('setup-current-password').value = ''
+          $('setup-password-box').classList.add('hidden')
+          await renderSetup(data)
+        }
+        try {
+          await startSetup()
+        } catch (err) {
+          if (err && err.data && err.data.code === 'PASSWORD_REQUIRED') {
+            $('setup-password-box').classList.remove('hidden')
+          } else showError(err.message)
+        }
         $('form-setup-password').addEventListener('submit', async (e) => {
           e.preventDefault()
-          try {
-            const data = await api('/auth/mfa/setup', { method: 'POST', headers: { 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ currentPassword: $('setup-current-password').value }) })
-            $('setup-current-password').value = ''
-            $('setup-password-box').classList.add('hidden')
-            await renderSetup(data)
-          } catch (err) { showError(err.message) }
+          try { await startSetup($('setup-current-password').value) } catch (err) { showError(err.message) }
         })
       } else {
+        if (oauthSetup) {
+          $('defer-box').classList.remove('hidden')
+          $('defer-mfa').addEventListener('click', async () => {
+            try {
+              await api('/auth/mfa/defer', { method: 'POST', body: JSON.stringify({ setupToken: S.getItem('kluzar_setup_token') }) })
+              S.removeItem('kluzar_setup_token')
+              S.removeItem('kluzar_setup_oauth')
+              go('/dashboard/')
+            } catch (err) { showError(err.message) }
+          })
+        }
         try {
           const data = await api('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ setupToken }) })
           if (data.setupToken) S.setItem('kluzar_setup_token', data.setupToken)
@@ -454,6 +531,7 @@
           }
           const data = await api('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ setupToken: S.getItem('kluzar_setup_token'), code: $('mfa-setup-code').value.trim() }) })
           S.removeItem('kluzar_setup_token')
+          S.removeItem('kluzar_setup_oauth')
           if (data.recoveryCodes) S.setItem('kluzar_recovery_codes', JSON.stringify(data.recoveryCodes))
           go('/recovery-codes/')
         } catch (err) {
@@ -479,6 +557,20 @@
       if (!challengeToken) { go('/login/'); return }
       let emailMode = false
       let resendTimer = null
+      function setCodeMode(email) {
+        if (email) {
+          $('mfa-verify-title').textContent = 'Enter the code sent to your email'
+          $('mfa-verify-lead').textContent = 'Enter the 6-digit code we sent to your email address.'
+          $('mfa-code-label').textContent = 'Email code'
+          $('mfa-code').placeholder = '123456'
+        } else {
+          $('mfa-verify-title').textContent = 'Enter your authenticator code'
+          $('mfa-verify-lead').textContent = 'Enter the 6-digit code from your authenticator app. If you lost access to the app, use one of your recovery codes instead.'
+          $('mfa-code-label').textContent = 'Authenticator code or recovery code'
+          $('mfa-code').placeholder = '123456 or XXXX-XXXX-XXXX-XXXX'
+          $('global-info').classList.add('hidden')
+        }
+      }
       function startResendCooldown(seconds) {
         const btn = $('resend-email-code')
         if (!btn) return
@@ -495,6 +587,7 @@
       async function sendEmailCode() {
         await api('/auth/mfa/email/send', { method: 'POST', body: JSON.stringify({ challengeToken }) })
         emailMode = true
+        setCodeMode(true)
         showInfo('We sent a 6-digit sign-in code to your email. Enter it below. If you cannot find it, check your spam folder. Gmail users: also check the Promotions tab.')
         $('send-email-code-row').classList.add('hidden')
         $('email-code-actions').classList.remove('hidden')
@@ -508,13 +601,14 @@
       })
       $('use-authenticator').addEventListener('click', () => {
         emailMode = false
+        setCodeMode(false)
         clearInterval(resendTimer)
         $('send-email-code-row').classList.remove('hidden')
         $('email-code-actions').classList.add('hidden')
       })
       $('form-mfa-verify').addEventListener('submit', async (e) => {
         e.preventDefault()
-        if (!isCodeFormat($('mfa-code').value)) { showError('Enter the 6-digit authenticator code.'); return }
+        if (!isCodeFormat($('mfa-code').value)) { showError(emailMode ? 'Enter the 6-digit email code.' : 'Enter the 6-digit authenticator code.'); return }
         try {
           if (emailMode) {
             await api('/auth/mfa/email/verify', { method: 'POST', body: JSON.stringify({ challengeToken, code: $('mfa-code').value.trim() }) })
@@ -608,9 +702,11 @@
       const session = await requireSession()
       if (!session) return
       $('mfa-manage-status').textContent = session.user.mfaEnabled ? 'Authenticator is currently on.' : 'Authenticator is currently off.'
+      if (!session.user.mfaEnabled) {
+        setHidden('form-mfa-disable', true)
+        setHidden('mfa-disable-note', true)
+      }
       $('mfa-resetup').addEventListener('click', () => {
-        // The setup page itself will ask for the current password.
-        // Nothing sensitive is passed through storage to get there.
         go('/mfa-setup/')
       })
       $('form-mfa-disable').addEventListener('submit', async (e) => {
