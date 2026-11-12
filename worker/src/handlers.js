@@ -55,7 +55,7 @@ import {
   securityHeaders,
 } from './security.js'
 import { clampPbkdf2Iterations } from './crypto.js'
-import { sendSignInEmail, sendVerificationEmail } from './email.js'
+import { sendSignInEmail, sendVerificationEmail, sendWelcomeEmailOnce } from './email.js'
 import {
   OAUTH_HANDOFF_TTL_MS,
   OAUTH_REDIRECT_BASE,
@@ -508,8 +508,8 @@ export async function handleRequest(request, env) {
       try {
         await env.DB.batch([
           env.DB.prepare(
-            'INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          ).bind(userId, email, email, passwordHash, 'pending_mfa', 0, 0, 1, nowIso(), nowIso()),
+            'INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, password_set, created_at, updated_at, welcome_email_sent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          ).bind(userId, email, email, passwordHash, 'pending_mfa', 0, 0, 1, nowIso(), nowIso(), 0),
           env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
             .bind(userId, 'free', 'active', nowIso()),
           env.DB.prepare('DELETE FROM setup_tokens WHERE user_id = ?').bind(userId),
@@ -792,8 +792,8 @@ export async function handleRequest(request, env) {
         const unusable = await hashPassword(randomToken(32), iterations(env))
         try {
           await env.DB.batch([
-            env.DB.prepare('INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-              .bind(userId, identity.email, identity.email, unusable, 'pending_mfa', 1, 0, 0, nowIso(), nowIso()),
+            env.DB.prepare('INSERT INTO users (id, email, email_normalized, password_hash, status, email_verified, mfa_enabled, password_set, created_at, updated_at, welcome_email_sent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+              .bind(userId, identity.email, identity.email, unusable, 'pending_mfa', 1, 0, 0, nowIso(), nowIso(), 0),
             env.DB.prepare('INSERT INTO entitlements (user_id, plan, status, updated_at) VALUES (?, ?, ?, ?)')
               .bind(userId, 'free', 'active', nowIso()),
             env.DB.prepare('INSERT INTO oauth_identities (id, user_id, provider, provider_user_id, email_normalized, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -881,6 +881,7 @@ export async function handleRequest(request, env) {
       const freshUser = await getUserById(env.DB, user.id)
       const session = await createSession(env.DB, user.id, userAgent, ipH)
       await audit(env.DB, user.id, 'oauth_mfa_deferred', ipH, true, '')
+      try { await sendWelcomeEmailOnce(env, user.id, user.email) } catch { /* welcome email must never break activation */ }
       return jsonResponse(env, request, 200, { ok: true, user: publicUser(freshUser), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
     }
 
@@ -999,6 +1000,7 @@ export async function handleRequest(request, env) {
         // 30-second code, which replay protection would rightly reject.
         const activatedUser = await getUserById(env.DB, setupRow.user_id)
         const session = await createSession(env.DB, setupRow.user_id, userAgent, ipH)
+        try { await sendWelcomeEmailOnce(env, setupRow.user_id, activatedUser.email) } catch { /* welcome email must never break activation */ }
         return jsonResponse(env, request, 200, { ok: true, activated: true, recoveryCodes: codes, user: publicUser(activatedUser), csrfToken: session.csrfToken }, { 'Set-Cookie': sessionCookie(session.token, env) })
       }
       // B) Login challenge (TOTP or recovery code)
