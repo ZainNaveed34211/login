@@ -23,7 +23,6 @@ function codeEmailHtml(kind, code, email) {
   const lead = signin
     ? 'Your One-Time Password (OTP) to sign in to your Kluzar account is:'
     : 'Your One-Time Password (OTP) for account verification is:'
-  const verifyUrl = signin ? 'https://accounts.kluzar.com/login/code/' : 'https://accounts.kluzar.com/signup/verify/'
   return '<!doctype html><html><body style="margin:0;padding:0;background-color:#f4f3fa;">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f3fa;"><tr><td align="center" style="padding:32px 16px;">' +
     '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #e8e7f0;border-radius:16px;">' +
@@ -34,8 +33,7 @@ function codeEmailHtml(kind, code, email) {
     '<tr><td align="center" style="padding:0 24px 20px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="background-color:#f2f1f7;border-radius:12px;padding:20px 16px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#7c5cff;font-size:34px;font-weight:800;letter-spacing:8px;">' + escapeHtml(code) + '</td></tr></table></td></tr>' +
     '<tr><td style="padding:0 24px 8px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#26233f;font-size:15px;line-height:1.6;">This OTP is valid for <b>15 minutes</b>. Please do not share this code with anyone.</td></tr>' +
     '<tr><td style="padding:0 24px 8px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#26233f;font-size:15px;line-height:1.6;">If you didn\'t request this code, please ignore this email.</td></tr>' +
-    '<tr><td style="padding:0 24px 20px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#26233f;font-size:15px;line-height:1.6;">Thank you for using Kluzar!</td></tr>' +
-    '<tr><td align="center" style="padding:0 24px 28px;"><a href="' + verifyUrl + '" style="display:inline-block;background-color:#7c5cff;color:#ffffff;text-decoration:none;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;font-weight:700;font-size:15px;padding:13px 28px;border-radius:999px;">Enter your code</a></td></tr>' +
+    '<tr><td style="padding:0 24px 28px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#26233f;font-size:15px;line-height:1.6;">Thank you for using Kluzar!</td></tr>' +
     footerHtml() +
     '</table></td></tr></table></body></html>'
 }
@@ -45,8 +43,7 @@ function codeEmailText(kind, code, email) {
   const lead = signin
     ? 'Your One-Time Password (OTP) to sign in to your Kluzar account is: '
     : 'Your One-Time Password (OTP) for account verification is: '
-  const verifyUrl = signin ? 'https://accounts.kluzar.com/login/code/' : 'https://accounts.kluzar.com/signup/verify/'
-  return 'Hi, ' + email + ',\n' + lead + code + '\nThis OTP is valid for 15 minutes. Please do not share this code with anyone.\nIf you didn\'t request this code, please ignore this email.\nThank you for using Kluzar!\nEnter the code here: ' + verifyUrl + footerText()
+  return 'Hi, ' + email + ',\n' + lead + code + '\nThis OTP is valid for 15 minutes. Please do not share this code with anyone.\nIf you didn\'t request this code, please ignore this email.\nThank you for using Kluzar!' + footerText()
 }
 
 function welcomeEmailHtml() {
