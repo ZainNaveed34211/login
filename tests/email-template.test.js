@@ -24,9 +24,9 @@ function textOf(html) {
   return html.replace(/<[^>]*>/g, '')
 }
 
-for (const [name, sendFn, subject, title, verifyUrl] of [
-  ['verification', sendVerificationEmail, 'Your Kluzar verification code', 'Verify your email address', 'https://accounts.kluzar.com/signup/verify/'],
-  ['sign-in', sendSignInEmail, 'Your Kluzar sign-in code', 'Your OTP Code', 'https://accounts.kluzar.com/login/code/'],
+for (const [name, sendFn, subject, title] of [
+  ['verification', sendVerificationEmail, 'Your Kluzar verification code', 'Verify your email address'],
+  ['sign-in', sendSignInEmail, 'Your Kluzar sign-in code', 'Your OTP Code'],
 ]) {
   test(name + ' email keeps sender, subject and plain-text code', async () => {
     const body = await capture(sendFn)
@@ -41,7 +41,9 @@ for (const [name, sendFn, subject, title, verifyUrl] of [
     assert.ok(body.textContent.includes('Please do not share this code with anyone'))
     assert.ok(body.textContent.includes("If you didn't request this code"))
     assert.ok(body.textContent.includes('Thank you for using Kluzar!'))
-    assert.ok(body.textContent.includes(verifyUrl))
+    assert.doesNotMatch(body.textContent, /Enter your code/)
+    assert.doesNotMatch(body.textContent, /\/signup\/verify\//)
+    assert.doesNotMatch(body.textContent, /\/login\/code\//)
     assert.match(body.textContent, /https:\/\/kluzar\.com/)
     assert.match(body.textContent, /https:\/\/contact\.kluzar\.com/)
     assert.match(body.textContent, /https:\/\/support\.kluzar\.com/)
@@ -92,13 +94,14 @@ for (const [name, sendFn, subject, title, verifyUrl] of [
     assert.ok(body.textContent.includes('Hi, ' + EVIL_EMAIL + ','))
   })
 
-  test(name + ' email button goes to the verify page and footer links are small text links only', async () => {
+  test(name + ' email has no enter-code button and no verify-page link', async () => {
     const body = await capture(sendFn)
-    assert.ok(body.htmlContent.includes('href="' + verifyUrl + '"'))
-    assert.ok(body.htmlContent.includes('>Enter your code</a>'))
+    assert.doesNotMatch(body.htmlContent, /Enter your code/)
+    assert.doesNotMatch(body.htmlContent, /\/signup\/verify\//)
+    assert.doesNotMatch(body.htmlContent, /\/login\/code\//)
     assert.doesNotMatch(body.htmlContent, />Copy code</)
     assert.doesNotMatch(body.htmlContent, />Verify Email</)
-    assert.equal((body.htmlContent.match(/border-radius:999px/g) || []).length, 1)
+    assert.equal((body.htmlContent.match(/border-radius:999px/g) || []).length, 0)
     assert.ok(body.htmlContent.includes('href="https://contact.kluzar.com"'))
     assert.ok(body.htmlContent.includes('>Contact</a>'))
     assert.ok(body.htmlContent.includes('href="https://support.kluzar.com"'))
